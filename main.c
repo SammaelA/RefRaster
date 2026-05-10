@@ -408,7 +408,11 @@ void free_scene(Scene *s)
 
 void render_scene(Scene *s)
 {
+clock_t t1 = clock();
+
     clear_framebuffer(&s->fb, 0.0f);
+
+clock_t t2 = clock();
 
     const mat4 view = look_at(s->cam.pos, s->cam.lookAt, s->cam.up);
     const mat4 proj = perspective(s->cam.fovy, s->cam.aspect, s->cam.z_near, s->cam.z_far);
@@ -426,6 +430,8 @@ void render_scene(Scene *s)
         s->all_pts[i].norm = norm3(vmul4v(viewInvTransposed, s->m.normals[i]));
     }
 
+clock_t t3 = clock();
+
     RastPoint cur_pts[3];
     for (int i = 0; i < s->m.num_triangles; i++)
     {
@@ -439,6 +445,8 @@ void render_scene(Scene *s)
         rasterize_triangle(cur_pts, &s->fb);
     }
 
+clock_t t4 = clock();
+
     for (int i=0;i<s->fb.w*s->fb.h;i++)
     {
         s->present_buffer[4*i+0] = 255*clampf(s->fb.data[4*i+0], 0.0f, 1.0f);
@@ -446,6 +454,14 @@ void render_scene(Scene *s)
         s->present_buffer[4*i+2] = 255*clampf(s->fb.data[4*i+2], 0.0f, 1.0f);
         s->present_buffer[4*i+3] = 255;
     }
+
+clock_t t5 = clock();
+
+    float time1_ms = 1000.0f * (t2 - t1) / CLOCKS_PER_SEC;
+    float time2_ms = 1000.0f * (t3 - t2) / CLOCKS_PER_SEC;
+    float time3_ms = 1000.0f * (t4 - t3) / CLOCKS_PER_SEC;
+    float time4_ms = 1000.0f * (t5 - t4) / CLOCKS_PER_SEC;
+    //printf("times = %f %f %f %f\n", time1_ms, time2_ms, time3_ms, time4_ms);
 }
 
 #define WIDTH 640
