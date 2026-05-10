@@ -1,6 +1,7 @@
 #include "image_utils.h"
 #include "vectors.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 void print3x3(mat3 m)
 {
@@ -14,6 +15,46 @@ void print4x4(mat4 m)
     printf("%f, %f, %f, %f\n", m.cols[1].x, m.cols[1].y, m.cols[1].z, m.cols[1].w);
     printf("%f, %f, %f, %f\n", m.cols[2].x, m.cols[2].y, m.cols[2].z, m.cols[2].w);
     printf("%f, %f, %f, %f\n", m.cols[3].x, m.cols[3].y, m.cols[3].z, m.cols[3].w);
+}
+
+typedef struct
+{
+    vec2 screen_pos;
+    vec2 tc;
+    float depth;
+    vec3 norm;
+} RastPoint;
+
+typedef struct 
+{
+    float *data;
+    int w;
+    int h;
+    int ch;
+} FrameBuffer;
+
+FrameBuffer init_framebuffer(int w, int h, int ch)
+{
+    FrameBuffer fb;
+    fb.w = w;
+    fb.h = h;
+    fb.ch = ch;
+    fb.data = malloc(w * h * ch * sizeof(float));
+    return fb;
+}
+void free_framebuffer(FrameBuffer *fb)
+{
+    free(fb->data);
+    fb->data = NULL;
+}
+void clear_framebuffer(FrameBuffer *fb, float value)
+{
+    for (int i = 0; i < fb->w * fb->h * fb->ch; i++)
+        fb->data[i] = value;
+}
+void save_framebuffer_to_image_RGB(const FrameBuffer *fb, const char *filename)
+{
+    save_image_f32_png_rgb(fb->data, filename, fb->w, fb->h, fb->ch, 2.2f);
 }
 
 void test_vectors()
@@ -43,5 +84,23 @@ void test_vectors()
 int main(int argc, char **argv)
 {
 
+    FrameBuffer fb = init_framebuffer(640, 480, 3);
+    clear_framebuffer(&fb, 0.0f);
+
+    for (int y = 0; y < fb.h; y++)
+    {
+        for (int x = 0; x < fb.w; x++)
+        {
+            float u = (float)x / fb.w;
+            float v = (float)y / fb.h;
+            fb.data[y * fb.w * fb.ch + x * fb.ch + 0] = u;
+            fb.data[y * fb.w * fb.ch + x * fb.ch + 1] = v;
+            fb.data[y * fb.w * fb.ch + x * fb.ch + 2] = 0.0f;
+        }
+    }
+
+    save_framebuffer_to_image_RGB(&fb, "saves/test.png");
+
+    free_framebuffer(&fb);
     return 0;
 }
