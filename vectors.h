@@ -2,6 +2,12 @@
 #define VECTORS_H
 #include <math.h>
 
+#define M_PI 3.14159265358979323846
+
+static float minf(float a, float b) { return a < b ? a : b; }
+static float maxf(float a, float b) { return a > b ? a : b; }
+static float clampf(float x, float min, float max) { return minf(maxf(x, min), max); }
+
 typedef struct
 {
     union
