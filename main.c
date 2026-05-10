@@ -1,5 +1,7 @@
 #include "image_utils.h"
 #include "vectors.h"
+#define TINYOBJ_LOADER_C_IMPLEMENTATION
+#include "external/tinyobj_loader_c.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -99,7 +101,8 @@ static inline int in_triangle(vec2 p, vec2 a, vec2 b, vec2 c, vec3 *bary)
     const float areaABP = signed_area(a, b, p);
     const float areaBCP = signed_area(b, c, p);
     const float areaCAP = signed_area(c, a, p);
-    int inTri = areaABP >= 0 && areaBCP >= 0 && areaCAP >= 0;
+    int inTri = (areaABP >= 0 && areaBCP >= 0 && areaCAP >= 0) ||
+                (areaABP <= 0 && areaBCP <= 0 && areaCAP <= 0);
     if (inTri)
     {
         const float totalArea = (areaABP + areaBCP + areaCAP);
@@ -114,6 +117,8 @@ static inline int in_triangle(vec2 p, vec2 a, vec2 b, vec2 c, vec3 *bary)
 
 void rasterize_triangle(const RastPoint *pts, FrameBuffer *fb)
 {
+    const vec3 light_dir = norm3(make3(1,1,1));
+
     const vec2 a = pts[0].screen_pos;
     const vec2 b = pts[1].screen_pos;
     const vec2 c = pts[2].screen_pos;
@@ -154,7 +159,10 @@ void rasterize_triangle(const RastPoint *pts, FrameBuffer *fb)
 
             vec3 n = cmul3(depth, add3(add3(cmul3(bary.x, nx), cmul3(bary.y, ny)), cmul3(bary.z, nz)));
             vec2 tc = cmul2(depth, add2(add2(cmul2(bary.x, tx), cmul2(bary.y, ty)), cmul2(bary.z, tz)));
-            vec3 col = bary; // TODO
+
+            vec3 albedo = make3(1, 1, 1);
+            float q = maxf(0.0f, dot3(n, light_dir))*0.5f + 0.25f;
+            vec3 col = cmul3(q, albedo);
 
             fb->data[(y * fb->w + x) * fb->ch + CHANNEL_R] = col.x;
             fb->data[(y * fb->w + x) * fb->ch + CHANNEL_G] = col.y;
@@ -164,52 +172,234 @@ void rasterize_triangle(const RastPoint *pts, FrameBuffer *fb)
     }
 }
 
+typedef struct
+{
+    int num_vertices;
+    int num_triangles;
+    vec3 *verts;
+    vec3 *normals;
+    vec2 *tcs;
+    int *indices;
+} mesh;
+
+void free_mesh(mesh *m)
+{
+    free(m->verts);
+    free(m->normals);
+    free(m->tcs);
+    free(m->indices);
+}
+
+#ifdef _WIN64
+#define atoll(S) _atoi64(S)
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
+
+static char* mmap_file(size_t* len, const char* filename) {
+#ifdef _WIN64
+  HANDLE file =
+      CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+
+  if (file == INVALID_HANDLE_VALUE) { /* E.g. Model may not have materials. */
+    return NULL;
+  }
+
+  HANDLE fileMapping = CreateFileMapping(file, NULL, PAGE_READONLY, 0, 0, NULL);
+  assert(fileMapping != INVALID_HANDLE_VALUE);
+
+  LPVOID fileMapView = MapViewOfFile(fileMapping, FILE_MAP_READ, 0, 0, 0);
+  char* fileMapViewChar = (char*)fileMapView;
+  assert(fileMapView != NULL);
+
+  DWORD file_size = GetFileSize(file, NULL);
+  (*len) = (size_t)file_size;
+
+  return fileMapViewChar;
+#else
+
+  struct stat sb;
+  char* p;
+  int fd;
+
+  fd = open(filename, O_RDONLY);
+  if (fd == -1) {
+    perror("open");
+    return NULL;
+  }
+
+  if (fstat(fd, &sb) == -1) {
+    perror("fstat");
+    return NULL;
+  }
+
+  if (!S_ISREG(sb.st_mode)) {
+    fprintf(stderr, "%s is not a file\n", filename);
+    return NULL;
+  }
+
+  p = (char*)mmap(0, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
+
+  if (p == MAP_FAILED) {
+    perror("mmap");
+    return NULL;
+  }
+
+  if (close(fd) == -1) {
+    perror("close");
+    return NULL;
+  }
+
+  (*len) = sb.st_size;
+
+  return p;
+
+#endif
+}
+
+static void get_file_data(void* ctx, const char* filename, const int is_mtl,
+                          const char* obj_filename, char** data, size_t* len) 
+                          {
+  // NOTE: If you allocate the buffer with malloc(),
+  // You can define your own memory management struct and pass it through `ctx`
+  // to store the pointer and free memories at clean up stage(when you quit an
+  // app)
+  // This example uses mmap(), so no free() required.
+  (void)ctx;
+
+  if (!filename) {
+    fprintf(stderr, "null filename\n");
+    (*data) = NULL;
+    (*len) = 0;
+    return;
+  }
+
+  size_t data_len = 0;
+
+  *data = mmap_file(&data_len, filename);
+  (*len) = data_len;
+}
+
+mesh load_obj(const char *filename)
+{
+    mesh m;
+    m.num_triangles = 0;
+    m.num_vertices = 0;
+
+    tinyobj_attrib_t attrib;
+    tinyobj_shape_t *shapes = NULL;
+    size_t num_shapes;
+    tinyobj_material_t *materials = NULL;
+    size_t num_materials;
+
+    unsigned int flags = TINYOBJ_FLAG_TRIANGULATE;
+    int ret =
+        tinyobj_parse_obj(&attrib, &shapes, &num_shapes, &materials,
+                          &num_materials, filename, get_file_data, NULL, flags);
+    if (ret != TINYOBJ_SUCCESS)
+        return m;
+
+    printf("# of shapes    = %d\n", (int)num_shapes);
+    printf("# of materials = %d\n", (int)num_materials);
+    printf("# of vertices  = %d\n", (int)attrib.num_vertices);
+    printf("# of normals   = %d\n", (int)attrib.num_normals);
+    printf("# of texcoords = %d\n", (int)attrib.num_texcoords);
+    printf("# of faces     = %d\n", (int)attrib.num_faces/3);
+
+    m.verts = malloc(attrib.num_vertices * sizeof(vec3));
+    m.normals = malloc(attrib.num_vertices * sizeof(vec3));
+    m.tcs = malloc(attrib.num_vertices * sizeof(vec2));
+    m.indices = malloc(attrib.num_faces * sizeof(int));
+    m.num_vertices = attrib.num_vertices;
+    m.num_triangles = attrib.num_faces/3;
+
+    for (int i = 0; i < attrib.num_vertices; i++)
+        m.verts[i] = make3(attrib.vertices[3 * i + 0], attrib.vertices[3 * i + 1], attrib.vertices[3 * i + 2]);
+    if (attrib.num_normals == attrib.num_vertices)
+    {
+        for (int i = 0; i < attrib.num_normals; i++)
+            m.normals[i] = make3(attrib.normals[3 * i + 0], attrib.normals[3 * i + 1], attrib.normals[3 * i + 2]);
+    }
+    else
+    {
+        for (int i = 0; i < attrib.num_vertices; i++)
+            m.normals[i] = make3(1.0f, 0.0f, 0.0f);
+    }
+    if (attrib.num_texcoords == attrib.num_vertices)
+    {
+        for (int i = 0; i < attrib.num_texcoords; i++)
+            m.tcs[i] = make2(attrib.texcoords[2 * i + 0], attrib.texcoords[2 * i + 1]);
+    }
+    else
+    {
+        for (int i = 0; i < attrib.num_vertices; i++)
+            m.tcs[i] = make2(0.0f, 0.0f);
+    }
+
+    for (int i = 0; i < attrib.num_faces; i++)
+    {
+        m.indices[i] = attrib.faces[i].v_idx;
+    }
+
+    tinyobj_attrib_free(&attrib);
+    tinyobj_shapes_free(shapes, num_shapes);
+    tinyobj_materials_free(materials, num_materials);
+    return m;
+}
+
 int main(int argc, char **argv)
 {
-    FrameBuffer fb = init_framebuffer(640, 480, 4);
+    mesh m = load_obj("/home/sammael/models/Bunny.obj");
+
+    FrameBuffer fb = init_framebuffer(512, 512, 4);
     clear_framebuffer(&fb, 0.0f);
 
-    const int tris = 100;
-    const int radius = 200;
-    const vec2 center = make2(320.0f, 240.0f);
-    RastPoint pts[3*tris];
+    mat4 view = look_at(make3(2, 0, 2), make3(0, 0, 0), make3(0, 1, 0));
+    mat4 proj = perspective(M_PI/6, (float)(fb.w)/(fb.h), 0.01f, 1000.0f);
+    mat4 viewProj = mul4x4(proj, view);
+    mat4 viewInvTransposed = transpose4(inverse4x4(view));
 
-    for (int i = 0; i < tris; i++)
-    {
-        float phi1 = 2.0f * M_PI * i / tris;
-        float phi2 = 2.0f * M_PI * (i + 1.0f) / tris;
-        vec2 a = center;
-        vec2 c = make2(center.x + radius * cosf(phi1), center.y + radius * sinf(phi1));
-        vec2 b = make2(center.x + radius * cosf(phi2), center.y + radius * sinf(phi2));
-
-        pts[3*i+0].screen_pos = a; pts[3*i+0].depth = (float)i/tris;
-        pts[3*i+1].screen_pos = b; pts[3*i+1].depth = (float)i/tris;
-        pts[3*i+2].screen_pos = c; pts[3*i+2].depth = (float)i/tris;
-    }
+    RastPoint *all_pts = malloc(m.num_vertices * sizeof(RastPoint));
+    RastPoint cur_pts[3];
 
     clock_t begin = clock();
 
-    for (int i = 0; i < tris; i++)
-        rasterize_triangle(pts + 3*i, &fb);
+    for (int i = 0; i < m.num_vertices; i++)
+    {
+        vec4 pt = vmul4(viewProj, to_vec4(m.verts[i], 1.0f));
+        vec3 pt_NDC = make3(pt.x / pt.w, pt.y / pt.w, pt.z / pt.w);
+
+        all_pts[i].depth = pt_NDC.z;
+        all_pts[i].screen_pos = make2(0.5f*(pt_NDC.x+1.0f)*fb.w, 0.5f*(pt_NDC.y+1.0f)*fb.h);
+        all_pts[i].tc = m.tcs[i];
+        all_pts[i].norm = norm3(vmul4v(viewInvTransposed, m.normals[i]));
+        //printf("norm %f %f %f --> %f %f %f\n", m.normals[i].x, m.normals[i].y, m.normals[i].z, all_pts[i].norm.x, all_pts[i].norm.y, all_pts[i].norm.z);
+    }
+
+    for (int i = 0; i < m.num_triangles; i++)
+    {
+        cur_pts[0] = all_pts[m.indices[3*i+0]];
+        cur_pts[1] = all_pts[m.indices[3*i+1]];
+        cur_pts[2] = all_pts[m.indices[3*i+2]];
+
+        rasterize_triangle(cur_pts, &fb);
+    }
 
     clock_t end = clock();
     double time_spent = 1000.0 * (double)(end - begin) / CLOCKS_PER_SEC;    
 
     printf("Time: %.1f ms\n", time_spent);    
-    // for (int y = 0; y < fb.h; y++)
-    // {
-    //     for (int x = 0; x < fb.w; x++)
-    //     {
-    //         float u = (float)x / fb.w;
-    //         float v = (float)y / fb.h;
-    //         fb.data[y * fb.w * fb.ch + x * fb.ch + 0] = u;
-    //         fb.data[y * fb.w * fb.ch + x * fb.ch + 1] = v;
-    //         fb.data[y * fb.w * fb.ch + x * fb.ch + 2] = 0.0f;
-    //     }
-    // }
 
     save_framebuffer_to_image_RGB(&fb, "saves/test.png");
 
+    free(all_pts);
     free_framebuffer(&fb);
+    free_mesh(&m);
     return 0;
 }

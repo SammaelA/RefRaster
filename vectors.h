@@ -7,6 +7,7 @@
 static float minf(float a, float b) { return a < b ? a : b; }
 static float maxf(float a, float b) { return a > b ? a : b; }
 static float clampf(float x, float min, float max) { return minf(maxf(x, min), max); }
+static float absf(float x) { return x < 0.0f ? -x : x; }
 
 typedef struct
 {
@@ -379,9 +380,9 @@ static inline mat3 mul3x3(mat3 a, mat3 b)
     {
         for (int j = 0; j < 3; j++)
         {
-            m.cols[i].M[j] = a.cols[i].M[0] * b.cols[0].M[j] +
-                             a.cols[i].M[1] * b.cols[1].M[j] +
-                             a.cols[i].M[2] * b.cols[2].M[j];
+            m.cols[i].M[j] = b.cols[i].M[0] * a.cols[0].M[j] +
+                             b.cols[i].M[1] * a.cols[1].M[j] +
+                             b.cols[i].M[2] * a.cols[2].M[j];
         }
     }
     return m;
@@ -485,10 +486,10 @@ static inline mat4 mul4x4(mat4 a, mat4 b)
     {
         for (int j = 0; j < 4; j++)
         {
-            m.cols[i].M[j] = a.cols[i].M[0] * b.cols[0].M[j] +
-                             a.cols[i].M[1] * b.cols[1].M[j] +
-                             a.cols[i].M[2] * b.cols[2].M[j] +
-                             a.cols[i].M[3] * b.cols[3].M[j];
+            m.cols[i].M[j] = b.cols[i].M[0] * a.cols[0].M[j] +
+                             b.cols[i].M[1] * a.cols[1].M[j] +
+                             b.cols[i].M[2] * a.cols[2].M[j] +
+                             b.cols[i].M[3] * a.cols[3].M[j];
         }
     }
     return m;
@@ -622,26 +623,50 @@ static mat4 transpose4(mat4 m)
 
 static mat4 look_at(vec3 eye, vec3 center, vec3 up)
 {
-    const vec3 f = norm3(sub3(center, eye));
-    const vec3 s = norm3(cross3(f, up));
-    const vec3 u = cross3(s, f);
-    mat4 m;
-    m.cols[0] = make4(s.x, u.x, -f.x, 0.0f);
-    m.cols[1] = make4(s.y, u.y, -f.y, 0.0f);
-    m.cols[2] = make4(s.z, u.z, -f.z, 0.0f);
-    m.cols[3] = make4(-dot3(s, eye), -dot3(u, eye), dot3(f, eye), 1.0f);
-    return m;
+    vec3 x, y, z; // basis; will make a rotation matrix
+    z.x = eye.x - center.x;
+    z.y = eye.y - center.y;
+    z.z = eye.z - center.z;
+    z = norm3(z);
+    y.x = up.x;
+    y.y = up.y;
+    y.z = up.z;
+    x = cross3(y, z); // X vector = Y cross Z
+    y = cross3(z, x); // Recompute Y = Z cross X
+    // cross product gives area of parallelogram, which is < 1.0 for
+    // non-perpendicular unit-length vectors; so normalize x, y here
+    x = norm3(x);
+    y = norm3(y);
+    mat4 M;
+    M.cols[0] = make4(x.x, y.x, z.x, 0.0f);
+    M.cols[1] = make4(x.y, y.y, z.y, 0.0f);
+    M.cols[2] = make4(x.z, y.z, z.z, 0.0f);
+    M.cols[3] = make4(-x.x * eye.x - x.y * eye.y - x.z*eye.z,
+                      -y.x * eye.x - y.y * eye.y - y.z*eye.z,
+                      -z.x * eye.x - z.y * eye.y - z.z*eye.z,
+                       1.0f);
+    return M;
 }
 
 static inline mat4 perspective(float fovy, float aspect, float zNear, float zFar)
 {
-    const float tanHalfFovy = tanf(fovy / 2.0f);
-    mat4 m;
-    m.cols[0] = make4(1.0f / (aspect * tanHalfFovy), 0.0f, 0.0f, 0.0f);
-    m.cols[1] = make4(0.0f, 1.0f / (tanHalfFovy), 0.0f, 0.0f);
-    m.cols[2] = make4(0.0f, 0.0f, -(zFar + zNear) / (zFar - zNear), -1.0f);
-    m.cols[3] = make4(0.0f, 0.0f, -(2.0f * zFar * zNear) / (zFar - zNear), 0.0f);
-    return m;
+    const float ymax = zNear * tanf(fovy);
+    const float xmax = ymax * aspect;
+    const float left = -xmax;
+    const float right = +xmax;
+    const float bottom = -ymax;
+    const float top = +ymax;
+    const float temp = 2.0f * zNear;
+    const float temp2 = right - left;
+    const float temp3 = top - bottom;
+    const float temp4 = zFar - zNear;
+    mat4 res;
+    res.cols[0] = make4(temp / temp2, 0.0f, 0.0f, 0.0f);
+    res.cols[1] = make4(0.0f, temp / temp3, 0.0f, 0.0f);
+    res.cols[2] = make4((right + left) / temp2, (top + bottom) / temp3, (-zFar - zNear) / temp4, -1.0);
+    res.cols[3] = make4(0.0f, 0.0f, (-temp * zFar) / temp4, 0.0f);
+
+    return res;
 }
 
 #endif

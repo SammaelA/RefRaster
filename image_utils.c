@@ -53,6 +53,22 @@ int save_image_f32_png_rgb(const float *data, const char *filename, int w, int h
         }
     }
 
+    //swap y
+    for (int i=0; i< h/2; i++)
+    {
+        for (int j=0; j< w; j++)
+        {
+            int i1 = i*w+j;
+            int i2 = (h-1-i)*w+j;
+            for (int ch=0; ch<4; ch++)
+            {
+                unsigned char tmp = data_rgba8[4*i1+ch];
+                data_rgba8[4*i1+ch] = data_rgba8[4*i2+ch];
+                data_rgba8[4*i2+ch] = tmp;
+            }
+        }
+    }
+
     int res = stbi_write_png(filename, w, h, 4, data_rgba8, 4*w);
 
     free(data_rgba8);
