@@ -4,7 +4,9 @@
 #include "external/tinyobj_loader_c.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
+#include <GLFW/glfw3.h>
 
 void print3x3(mat3 m)
 {
@@ -353,53 +355,195 @@ mesh load_obj(const char *filename)
     return m;
 }
 
-int main(int argc, char **argv)
+typedef struct
 {
-    mesh m = load_obj("/home/sammael/models/Bunny.obj");
+  vec3 pos;
+  vec3 lookAt;
+  vec3 up;
+  float  fovy;
+  float  z_near;
+  float  z_far;
+  float  aspect;
+} Camera;
+typedef struct
+{
+    Camera cam;
+    mesh m;
 
-    FrameBuffer fb = init_framebuffer(512, 512, 4);
-    clear_framebuffer(&fb, 0.0f);
+    RastPoint *all_pts;
 
-    mat4 view = look_at(make3(2, 0, 2), make3(0, 0, 0), make3(0, 1, 0));
-    mat4 proj = perspective(M_PI/6, (float)(fb.w)/(fb.h), 0.01f, 1000.0f);
-    mat4 viewProj = mul4x4(proj, view);
-    mat4 viewInvTransposed = transpose4(inverse4x4(view));
+    FrameBuffer fb;
+    unsigned char *present_buffer;
+} Scene;
 
-    RastPoint *all_pts = malloc(m.num_vertices * sizeof(RastPoint));
-    RastPoint cur_pts[3];
+Scene init_scene(int width, int height, const char *filename)
+{
+    Scene s;
 
-    clock_t begin = clock();
+    s.cam.fovy = M_PI/6;
+    s.cam.pos = make3(0,0,3);
+    s.cam.lookAt = make3(0, 0, 0);
+    s.cam.up = make3(0, 1, 0);
+    s.cam.z_near = 0.01f;
+    s.cam.z_far = 1000.0f;
+    s.cam.aspect = (float)width/(float)height;
 
-    for (int i = 0; i < m.num_vertices; i++)
+    s.m = load_obj(filename);
+
+    s.fb = init_framebuffer(width, height, 4);
+    clear_framebuffer(&s.fb, 0.0f);
+    s.present_buffer = malloc(4 * width * height);
+    s.all_pts = malloc(s.m.num_vertices * sizeof(RastPoint));
+
+    return s;
+}
+
+void free_scene(Scene *s)
+{
+    free_mesh(&s->m);
+    free_framebuffer(&s->fb);
+    free(s->all_pts);
+    free(s->present_buffer);
+}
+
+void render_scene(Scene *s)
+{
+    clear_framebuffer(&s->fb, 0.0f);
+
+    const mat4 view = look_at(s->cam.pos, s->cam.lookAt, s->cam.up);
+    const mat4 proj = perspective(s->cam.fovy, s->cam.aspect, s->cam.z_near, s->cam.z_far);
+    const mat4 viewProj = mul4x4(proj, view);
+    const mat4 viewInvTransposed = transpose4(inverse4x4(view));
+
+    for (int i = 0; i < s->m.num_vertices; i++)
     {
-        vec4 pt = vmul4(viewProj, to_vec4(m.verts[i], 1.0f));
+        vec4 pt = vmul4(viewProj, to_vec4(s->m.verts[i], 1.0f));
         vec3 pt_NDC = make3(pt.x / pt.w, pt.y / pt.w, pt.z / pt.w);
 
-        all_pts[i].depth = pt_NDC.z;
-        all_pts[i].screen_pos = make2(0.5f*(pt_NDC.x+1.0f)*fb.w, 0.5f*(pt_NDC.y+1.0f)*fb.h);
-        all_pts[i].tc = m.tcs[i];
-        all_pts[i].norm = norm3(vmul4v(viewInvTransposed, m.normals[i]));
-        //printf("norm %f %f %f --> %f %f %f\n", m.normals[i].x, m.normals[i].y, m.normals[i].z, all_pts[i].norm.x, all_pts[i].norm.y, all_pts[i].norm.z);
+        s->all_pts[i].depth = pt_NDC.z;
+        s->all_pts[i].screen_pos = make2(0.5f*(pt_NDC.x+1.0f)*s->fb.w, 0.5f*(pt_NDC.y+1.0f)*s->fb.h);
+        s->all_pts[i].tc = s->m.tcs[i];
+        s->all_pts[i].norm = norm3(vmul4v(viewInvTransposed, s->m.normals[i]));
     }
 
-    for (int i = 0; i < m.num_triangles; i++)
+    RastPoint cur_pts[3];
+    for (int i = 0; i < s->m.num_triangles; i++)
     {
-        cur_pts[0] = all_pts[m.indices[3*i+0]];
-        cur_pts[1] = all_pts[m.indices[3*i+1]];
-        cur_pts[2] = all_pts[m.indices[3*i+2]];
+        cur_pts[0] = s->all_pts[s->m.indices[3*i+0]];
+        cur_pts[1] = s->all_pts[s->m.indices[3*i+1]];
+        cur_pts[2] = s->all_pts[s->m.indices[3*i+2]];
 
-        rasterize_triangle(cur_pts, &fb);
+        if (cur_pts[0].depth < 0.0f || cur_pts[1].depth < 0.0f || cur_pts[2].depth < 0.0f)
+            continue;
+
+        rasterize_triangle(cur_pts, &s->fb);
     }
 
-    clock_t end = clock();
-    double time_spent = 1000.0 * (double)(end - begin) / CLOCKS_PER_SEC;    
+    for (int i=0;i<s->fb.w*s->fb.h;i++)
+    {
+        s->present_buffer[4*i+0] = 255*clampf(s->fb.data[4*i+0], 0.0f, 1.0f);
+        s->present_buffer[4*i+1] = 255*clampf(s->fb.data[4*i+1], 0.0f, 1.0f);
+        s->present_buffer[4*i+2] = 255*clampf(s->fb.data[4*i+2], 0.0f, 1.0f);
+        s->present_buffer[4*i+3] = 255;
+    }
+}
 
-    printf("Time: %.1f ms\n", time_spent);    
+#define WIDTH 640
+#define HEIGHT 480
 
-    save_framebuffer_to_image_RGB(&fb, "saves/test.png");
+int firstMouse = 1;
+float lastX = 0.0f;
+float lastY = 0.0f;
+float yaw = 0.0f, pitch = 0.0f, roll = 0.0f;
+float sensitivity = 0.001f;
+void mouse_callback(GLFWwindow* window, double xpos, double ypos)
+{
+    if (firstMouse)
+    {
+        lastX = xpos;
+        lastY = ypos;
+        firstMouse = 0;
+    }
+  
+    float xoffset = xpos - lastX;
+    float yoffset = ypos - lastY; 
+    lastX = xpos;
+    lastY = ypos;
 
-    free(all_pts);
-    free_framebuffer(&fb);
-    free_mesh(&m);
+    xoffset *= sensitivity;
+    yoffset *= sensitivity;
+
+    yaw   += xoffset;
+    pitch += yoffset;
+
+    if(pitch > M_PI/2.0f - 0.01f)
+        pitch = M_PI/2.0f - 0.01f;
+    if(pitch < -(M_PI/2.0f - 0.01f))
+        pitch = -(M_PI/2.0f - 0.01f);
+} 
+
+void process_input(GLFWwindow *window, Scene *s, float dt)
+{
+    mat3 rot = rotate_euler3x3_zyx(pitch, yaw, roll);
+    s->cam.up = rot.cols[1];
+    vec3 cameraFront = cmul3(-1.0f, rot.cols[2]);
+
+    const float cameraSpeed = 1.0f; // adjust accordingly
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        s->cam.pos = add3(s->cam.pos, cmul3(cameraSpeed*dt, cameraFront));
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        s->cam.pos = add3(s->cam.pos, cmul3(-1.0f*cameraSpeed*dt, cameraFront));
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        s->cam.pos = add3(s->cam.pos, cmul3(cameraSpeed*dt, norm3(cross3(cameraFront, s->cam.up))));
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        s->cam.pos = add3(s->cam.pos, cmul3(-1.0f*cameraSpeed*dt, norm3(cross3(cameraFront, s->cam.up))));
+
+    s->cam.lookAt = add3(s->cam.pos, cameraFront);
+
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, 1);
+}
+
+int main(int argc, char **argv)
+{
+    Scene scene = init_scene(WIDTH, HEIGHT, argv[1]);
+    GLFWwindow *window;
+    
+    if (!glfwInit())
+        return -1;
+    
+    window = glfwCreateWindow(WIDTH, HEIGHT, "Software Renderer", NULL, NULL);
+    if (!window) 
+    {
+        glfwTerminate();
+        return -1;
+    }
+    
+    glfwMakeContextCurrent(window);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED); 
+    glfwSetCursorPosCallback(window, mouse_callback);  
+    
+    // Main loop
+    float dt = 0;
+    while (!glfwWindowShouldClose(window)) 
+    {
+        process_input(window, &scene, dt);
+
+        clock_t begin = clock();
+        render_scene(&scene);
+        clock_t end = clock();
+        double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;   
+        dt = time_spent; 
+        printf("Time: %.1f ms\n", 1000.0 * time_spent);  
+        
+        glDrawPixels(WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, scene.present_buffer);
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+    
+    glfwTerminate();  
+
+    //save_framebuffer_to_image_RGB(&scene.fb, "saves/test.png");
+    free_scene(&scene);
     return 0;
 }
