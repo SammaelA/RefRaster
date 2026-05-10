@@ -128,6 +128,10 @@ static inline vec4 pixel_shader(vec3 n, vec2 tc, float depth)
 
 void rasterize_triangle(const RastPoint *pts, FrameBuffer *fb)
 {
+    //back face culling
+    if (signed_area(pts[0].screen_pos, pts[1].screen_pos, pts[2].screen_pos) > 0)
+        return;
+
     const vec2 a = pts[0].screen_pos;
     const vec2 b = pts[1].screen_pos;
     const vec2 c = pts[2].screen_pos;
