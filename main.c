@@ -116,10 +116,18 @@ static inline int in_triangle(vec2 p, vec2 a, vec2 b, vec2 c, vec3 *bary)
     return 0;
 }
 
-void rasterize_triangle(const RastPoint *pts, FrameBuffer *fb)
+static inline vec4 pixel_shader(vec3 n, vec2 tc, float depth)
 {
     const vec3 light_dir = norm3(make3(1,1,1));
+    vec3 albedo = make3(1, 1, 1);
+    float q = maxf(0.0f, dot3(n, light_dir))*0.5f + 0.25f;
+    vec3 col = cmul3(q, albedo);
 
+    return to_vec4(col, 1.0f);
+}
+
+void rasterize_triangle(const RastPoint *pts, FrameBuffer *fb)
+{
     const vec2 a = pts[0].screen_pos;
     const vec2 b = pts[1].screen_pos;
     const vec2 c = pts[2].screen_pos;
@@ -165,13 +173,11 @@ void rasterize_triangle(const RastPoint *pts, FrameBuffer *fb)
             vec3 n = cmul3(depth, add3(add3(cmul3(bary.x, nx), cmul3(bary.y, ny)), cmul3(bary.z, nz)));
             vec2 tc = cmul2(depth, add2(add2(cmul2(bary.x, tx), cmul2(bary.y, ty)), cmul2(bary.z, tz)));
 
-            vec3 albedo = make3(1, 1, 1);
-            float q = maxf(0.0f, dot3(n, light_dir))*0.5f + 0.25f;
-            vec3 col = cmul3(q, albedo);
+            vec4 res_color = pixel_shader(n, tc, depth);
 
-            fb->data[(y * fb->w + x) * fb->ch + CHANNEL_R] = col.x;
-            fb->data[(y * fb->w + x) * fb->ch + CHANNEL_G] = col.y;
-            fb->data[(y * fb->w + x) * fb->ch + CHANNEL_B] = col.z;
+            fb->data[(y * fb->w + x) * fb->ch + CHANNEL_R] = res_color.x;
+            fb->data[(y * fb->w + x) * fb->ch + CHANNEL_G] = res_color.y;
+            fb->data[(y * fb->w + x) * fb->ch + CHANNEL_B] = res_color.z;
             fb->data[(y * fb->w + x) * fb->ch + CHANNEL_DEPTH] = depth;
         }
     }
