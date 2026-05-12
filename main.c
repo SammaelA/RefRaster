@@ -103,8 +103,7 @@ static inline int in_triangle(vec2 p, vec2 a, vec2 b, vec2 c, vec3 *bary)
     const float areaABP = signed_area(a, b, p);
     const float areaBCP = signed_area(b, c, p);
     const float areaCAP = signed_area(c, a, p);
-    int inTri = (areaABP >= 0 && areaBCP >= 0 && areaCAP >= 0) ||
-                (areaABP <= 0 && areaBCP <= 0 && areaCAP <= 0);
+    int inTri = (areaABP <= 0 && areaBCP <= 0 && areaCAP <= 0);
     if (inTri)
     {
         const float totalArea = (areaABP + areaBCP + areaCAP);
@@ -124,6 +123,10 @@ void rasterize_triangle(const RastPoint *pts, FrameBuffer *fb)
     const vec2 a = pts[0].screen_pos;
     const vec2 b = pts[1].screen_pos;
     const vec2 c = pts[2].screen_pos;
+
+    //back face culling
+    if (signed_area(a, b, c) > 0)
+        return;
 
     // Triangle bounds
     float minfX = minf(minf(a.x, b.x), c.x);
@@ -464,9 +467,6 @@ clock_t t5 = clock();
     //printf("times = %f %f %f %f\n", time1_ms, time2_ms, time3_ms, time4_ms);
 }
 
-#define WIDTH 640
-#define HEIGHT 480
-
 int firstMouse = 1;
 float lastX = 0.0f;
 float lastY = 0.0f;
@@ -522,13 +522,21 @@ void process_input(GLFWwindow *window, Scene *s, float dt)
 
 int main(int argc, char **argv)
 {
-    Scene scene = init_scene(WIDTH, HEIGHT, argv[1]);
+    if (argc < 2)
+    {
+        printf("Usage: %s <obj_file> (optional: <width>, <height>)\n", argv[0]);
+        return -1;
+    }
+    const char *filename = argv[1];
+    int width  = argc > 2 ? atoi(argv[2]) : 640;
+    int height = argc > 3 ? atoi(argv[3]) : 480;
+    Scene scene = init_scene(width, height, filename);
     GLFWwindow *window;
     
     if (!glfwInit())
         return -1;
     
-    window = glfwCreateWindow(WIDTH, HEIGHT, "Software Renderer", NULL, NULL);
+    window = glfwCreateWindow(width, height, "Software Renderer", NULL, NULL);
     if (!window) 
     {
         glfwTerminate();
@@ -552,7 +560,7 @@ int main(int argc, char **argv)
         dt = time_spent; 
         printf("Time: %.1f ms\n", 1000.0 * time_spent);  
         
-        glDrawPixels(WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, scene.present_buffer);
+        glDrawPixels(width, height, GL_RGBA, GL_UNSIGNED_BYTE, scene.present_buffer);
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
