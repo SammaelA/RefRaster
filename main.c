@@ -470,11 +470,27 @@ clock_t t4 = clock();
 
 clock_t t5 = clock();
 
-    float time1_ms = 1000.0f * (t2 - t1) / CLOCKS_PER_SEC;
-    float time2_ms = 1000.0f * (t3 - t2) / CLOCKS_PER_SEC;
-    float time3_ms = 1000.0f * (t4 - t3) / CLOCKS_PER_SEC;
-    float time4_ms = 1000.0f * (t5 - t4) / CLOCKS_PER_SEC;
-    //printf("times = %f %f %f %f\n", time1_ms, time2_ms, time3_ms, time4_ms);
+    static uint32_t frameId = 0;
+    static float average_times[4] = {0,0,0,0}; 
+
+    const float alpha = frameId == 0 ? 0.0f : 0.99f;
+    float times[4];
+    times[0] = 1000.0f * (t2 - t1) / CLOCKS_PER_SEC;
+    times[1] = 1000.0f * (t3 - t2) / CLOCKS_PER_SEC;
+    times[2] = 1000.0f * (t4 - t3) / CLOCKS_PER_SEC;
+    times[3] = 1000.0f * (t5 - t4) / CLOCKS_PER_SEC;
+
+    for (int i=0;i<4;i++)
+        average_times[i] = alpha*average_times[i] + (1-alpha)*times[i];
+    frameId++;
+    
+    if (frameId % 100 == 0)
+    {
+        printf("clear FB:      %5.2f ms\n", average_times[0]);
+        printf("vertex shader: %5.2f ms\n", average_times[1]);
+        printf("pixel shader:  %5.2f ms\n", average_times[2]);
+        printf("resolve:       %5.2f ms\n\n", average_times[3]);
+    }
 }
 
 int firstMouse = 1;
@@ -567,8 +583,7 @@ int main(int argc, char **argv)
         render_scene(&scene);
         clock_t end = clock();
         double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;   
-        dt = time_spent; 
-        printf("Time: %.1f ms\n", 1000.0 * time_spent);  
+        dt = time_spent;  
         
         glDrawPixels(width, height, GL_RGBA, GL_UNSIGNED_BYTE, scene.present_buffer);
         glfwSwapBuffers(window);
