@@ -84,13 +84,14 @@ void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pi
     int blockEndX = clampf(ceil(maxfX), 0, fb->w - 1);
     int blockEndY = clampf(ceil(maxfY), 0, fb->h - 1);
 
-    vec3 invDepths = make3(1.0f / pts[0].depth, 1.0f / pts[1].depth, 1.0f / pts[2].depth);
-    vec2 tx = cmul2(invDepths.M[0], pts[0].tc);
-    vec2 ty = cmul2(invDepths.M[1], pts[1].tc);
-    vec2 tz = cmul2(invDepths.M[2], pts[2].tc);
-    vec3 nx = cmul3(invDepths.M[0], pts[0].norm);
-    vec3 ny = cmul3(invDepths.M[1], pts[1].norm);
-    vec3 nz = cmul3(invDepths.M[2], pts[2].norm);
+    // Perspective-correct interpolation weights: 1 / clip-space w, linear in screen space.
+    vec3 invW = make3(pts[0].inv_w, pts[1].inv_w, pts[2].inv_w);
+    vec2 tx = cmul2(invW.M[0], pts[0].tc);
+    vec2 ty = cmul2(invW.M[1], pts[1].tc);
+    vec2 tz = cmul2(invW.M[2], pts[2].tc);
+    vec3 nx = cmul3(invW.M[0], pts[0].norm);
+    vec3 ny = cmul3(invW.M[1], pts[1].norm);
+    vec3 nz = cmul3(invW.M[2], pts[2].norm);
 
     // Loop over the block of pixels covering the triangle bounds
     for (int y = blockStartY; y <= blockEndY; y++)
@@ -102,15 +103,18 @@ void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pi
             if (!in_triangle(p, a, b, c, &bary))
                 continue;
 
-            float depth = 1.0f / dot3(invDepths, bary);
+            float depth = bary.x * pts[0].depth + bary.y * pts[1].depth + bary.z * pts[2].depth;
             float buffer_depth = fb->data[(y * fb->w + x) * fb->ch + CHANNEL_DEPTH];
             if (depth >= buffer_depth)
                 continue;
 
+            const float w = 1.0f / dot3(invW, bary);
+
             Fragment f;
             f.depth = depth;
-            f.norm = cmul3(depth, add3(add3(cmul3(bary.x, nx), cmul3(bary.y, ny)), cmul3(bary.z, nz)));
-            f.tc = cmul2(depth, add2(add2(cmul2(bary.x, tx), cmul2(bary.y, ty)), cmul2(bary.z, tz)));
+            f.inv_w = 1.0f / w;
+            f.norm = cmul3(w, add3(add3(cmul3(bary.x, nx), cmul3(bary.y, ny)), cmul3(bary.z, nz)));
+            f.tc = cmul2(w, add2(add2(cmul2(bary.x, tx), cmul2(bary.y, ty)), cmul2(bary.z, tz)));
             f.screen_pos = p;
 
             vec4 res_color = pixel_shader(&f, scene);
@@ -148,7 +152,8 @@ void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
             cur_pts[1] = i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+1]];
             cur_pts[2] = i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+2]];
 
-            if (cur_pts[0].depth < 0.0f || cur_pts[1].depth < 0.0f || cur_pts[2].depth < 0.0f)
+            // Reject triangles with any vertex at/behind the camera (clip w <= 0).
+            if (cur_pts[0].inv_w <= 0.0f || cur_pts[1].inv_w <= 0.0f || cur_pts[2].inv_w <= 0.0f)
                 continue;
 
             rasterize_triangle(cur_pts, &p->fb, p->ps, p->scene_ctx);

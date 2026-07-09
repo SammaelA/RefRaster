@@ -395,9 +395,9 @@ static inline mat3 mul3x3(mat3 a, mat3 b)
 static inline mat3 cmul3x3(float c, mat3 m)
 {
     mat3 r = m;
-    cmul3(c, r.cols[0]);
-    cmul3(c, r.cols[1]);
-    cmul3(c, r.cols[2]);
+    r.cols[0] = cmul3(c, r.cols[0]);
+    r.cols[1] = cmul3(c, r.cols[1]);
+    r.cols[2] = cmul3(c, r.cols[2]);
     return r;
 }
 static inline vec3 vmul3(mat3 m, vec3 v)
@@ -502,10 +502,10 @@ static inline mat4 mul4x4(mat4 a, mat4 b)
 static inline mat4 cmul4x4(float c, mat4 m)
 {
     mat4 r = m;
-    cmul4(c, r.cols[0]);
-    cmul4(c, r.cols[1]);
-    cmul4(c, r.cols[2]);
-    cmul4(c, r.cols[3]);
+    r.cols[0] = cmul4(c, r.cols[0]);
+    r.cols[1] = cmul4(c, r.cols[1]);
+    r.cols[2] = cmul4(c, r.cols[2]);
+    r.cols[3] = cmul4(c, r.cols[3]);
     return r;
 }
 static inline vec4 vmul4(mat4 m, vec4 v)

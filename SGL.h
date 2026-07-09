@@ -25,7 +25,8 @@ typedef struct
 {
     vec2 screen_pos;
     vec2 tc;
-    float depth;
+    float depth;   // NDC z, affine in screen space (used for the depth buffer)
+    float inv_w;   // 1 / clip-space w, the weight for perspective-correct interpolation
     vec3 norm;
 } Fragment;
 

@@ -59,6 +59,7 @@ Fragment default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *
 
     Fragment f;
     f.depth = pt_NDC.z;
+    f.inv_w = 1.0f / pt.w;   // pt.w = -z_eye (> 0 in front of the camera)
     f.screen_pos = make2(0.5f*(pt_NDC.x+1.0f)*s->fb.w, 0.5f*(pt_NDC.y+1.0f)*s->fb.h);
     f.tc = m->tcs[v_id];
     f.norm = norm3(vmul4v(s->viewInvTransposed, m->normals[v_id]));
