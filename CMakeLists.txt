@@ -6,7 +6,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-set(SOURCES main.c image_utils.c mesh_utils.c SGL.c)
+set(SOURCES src/main.c src/image_utils.c src/mesh_utils.c src/SGL.c)
 
 add_executable(raster ${SOURCES})
 
@@ -18,4 +18,5 @@ else()
     target_compile_options(raster PUBLIC -Wall -Wno-unused-function -O3 -march=native)
 endif()
 
+target_include_directories(raster PUBLIC src ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(raster PUBLIC m GL glfw)
