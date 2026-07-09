@@ -11,6 +11,7 @@
 // Work time sheet
 // 1) Basic render (matrix ops + obj loading + camera + window): ~5 hours
 // 2) Refactoring to some king of GL interface: ~2 hours
+// 3) Textures: ~1 hour
 
 void print3x3(mat3 m)
 {
@@ -28,13 +29,40 @@ void print4x4(mat4 m)
 
 void save_framebuffer_to_image_RGB(const SGL_FrameBuffer *fb, const char *filename)
 {
-    save_image_f32_png_rgb(fb->data, filename, fb->w, fb->h, fb->ch, 2.2f);
+    save_image_f32_png_rgb(fb->data, filename, fb->w, fb->h, fb->ch, 1.0f);
+}
+
+typedef struct 
+{
+    int w, h, channels;
+    float *data;
+} Texture_F32;
+
+vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc)
+{
+    const vec2 tc_t = make2(clampf(tc.x, 0.0f, 1-1e-6f)*tex->w, clampf(tc.y, 0.0f, 1-1e-6f)*tex->h);
+    const vec2 tc_i = make2((int)tc_t.x, (int)tc_t.y);
+    const vec2 dtc  = sub2(tc_t, tc_i);
+
+    vec3 res = make_zero3();
+    const int i = tc_i.x;
+    const int j = tc_i.y;
+    for (int ch=0; ch<tex->channels; ch++)
+    {
+        res.M[ch] = (1-dtc.x)*(1-dtc.y)*tex->data[tex->channels*(tex->w*(j+0) + (i+0))+ch] +
+                      (dtc.x)*(1-dtc.y)*tex->data[tex->channels*(tex->w*(j+0) + (i+1))+ch] + 
+                    (1-dtc.x)*  (dtc.y)*tex->data[tex->channels*(tex->w*(j+1) + (i+0))+ch] + 
+                      (dtc.x)*  (dtc.y)*tex->data[tex->channels*(tex->w*(j+1) + (i+1))+ch];
+    }   
+    return res;
 }
 
 typedef struct
 {
     SGL_Camera cam;
+
     mesh m;
+    Texture_F32 tex;
 
     SGL_FrameBuffer fb;
     unsigned char *present_buffer;
@@ -47,6 +75,17 @@ typedef struct
 
 } Scene;
 
+vec4 lambert_PS(const Fragment *f, const void *scene_ctx)
+{
+    const Scene *s = (const Scene *)scene_ctx;
+
+    const vec3 albedo = sample_f32_rgb(&(s->tex), f->tc);
+    float q = maxf(0.0f, dot3(f->norm, s->light_dir))*s->light_intensity + s->ambient_light_intensity;
+    const vec3 col = cmul3(q, albedo);
+
+    return to_vec4(col, 1.0f);
+}
+
 vec4 lambert_no_tex_PS(const Fragment *f, const void *scene_ctx)
 {
     const Scene *s = (const Scene *)scene_ctx;
@@ -56,6 +95,11 @@ vec4 lambert_no_tex_PS(const Fragment *f, const void *scene_ctx)
     const vec3 col = cmul3(q, albedo);
 
     return to_vec4(col, 1.0f);
+}
+
+vec4 vis_tc_PS(const Fragment *f, const void *scene_ctx)
+{
+    return make4(f->tc.x, f->tc.y, 0.0f, 1.0f);
 }
 
 Scene init_scene(int width, int height, const char *filename)
@@ -72,6 +116,11 @@ Scene init_scene(int width, int height, const char *filename)
 
     s.m = load_obj(filename);
 
+    s.tex.data = load_image_f32_rgb("resources/porcelain.jpg", &(s.tex.w), &(s.tex.h), 2.2f);
+    s.tex.channels = 3;
+    if (s.tex.data == NULL)
+        printf("failed to load texture\n");
+
     s.light_dir = norm3(make3(1,1,1));
     s.light_intensity = 1.0f;
     s.ambient_light_intensity = 0.33f;
@@ -86,6 +135,7 @@ Scene init_scene(int width, int height, const char *filename)
 void free_scene(Scene *s)
 {
     free_mesh(&s->m);
+    free(s->tex.data);
     SGL_free_framebuffer(&s->fb);
     free(s->present_buffer);
     SGL_free_internal_ctx(s->sgl_ctx);
@@ -103,7 +153,7 @@ clock_t t2 = clock();
     SGL_Pipeline p;
     p.cam = s->cam;
     p.fb =  s->fb;
-    p.ps = lambert_no_tex_PS;
+    p.ps = lambert_PS;
     p.scene_ctx = (void *)s;
     p.internal_ctx = s->sgl_ctx;
     SGL_draw_instances(&(s->m), &mat, 1, &p);
@@ -140,6 +190,7 @@ float lastX = 0.0f;
 float lastY = 0.0f;
 float yaw = 0.0f, pitch = 0.0f, roll = 0.0f;
 float sensitivity = 0.001f;
+float cameraSpeed = 1.0f;
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
     if (firstMouse)
@@ -172,7 +223,6 @@ void process_input(GLFWwindow *window, Scene *s, float dt)
     s->cam.up = rot.cols[1];
     vec3 cameraFront = cmul3(-1.0f, rot.cols[2]);
 
-    const float cameraSpeed = 1.0f; // adjust accordingly
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         s->cam.pos = add3(s->cam.pos, cmul3(cameraSpeed*dt, cameraFront));
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)

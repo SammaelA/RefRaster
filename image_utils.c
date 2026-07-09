@@ -74,3 +74,38 @@ int save_image_f32_png_rgb(const float *data, const char *filename, int w, int h
     free(data_rgba8);
     return res;
 }
+
+float *load_image_f32_rgb(const char *filename, int *w, int *h, float gamma)
+{
+    int channels = 0;
+    stbi_uc *raw_data = stbi_load(filename, w, h, &channels, 3);
+    if (channels != 3 || raw_data == NULL || w <= 0 || h<= 0)
+    {
+        if (raw_data)
+            STBI_FREE(raw_data);
+        return NULL;
+    }
+
+    //swap y
+    for (int i=0; i< (*h)/2; i++)
+    {
+        for (int j=0; j< (*w); j++)
+        {
+            int i1 = i*(*w)+j;
+            int i2 = ((*h)-1-i)*(*w)+j;
+            for (int ch=0; ch<channels; ch++)
+            {
+                unsigned char tmp = raw_data[channels*i1+ch];
+                raw_data[channels*i1+ch] = raw_data[channels*i2+ch];
+                raw_data[channels*i2+ch] = tmp;
+            }
+        }
+    }
+
+    int sz = 3*(*w)*(*h);
+    float *data_f32 = malloc(sz*sizeof(float));
+    for (int i=0; i<sz; i++)
+        data_f32[i] = powf(raw_data[i]/255.0f, gamma);
+
+    return data_f32;
+}

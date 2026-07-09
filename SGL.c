@@ -64,10 +64,6 @@ static inline int in_triangle(vec2 p, vec2 a, vec2 b, vec2 c, vec3 *bary)
 
 void rasterize_triangle(const Fragment *pts, SGL_FrameBuffer *fb, SGL_PixelShader pixel_shader, const void *scene)
 {
-    //back face culling
-    if (signed_area(pts[0].screen_pos, pts[1].screen_pos, pts[2].screen_pos) > 0)
-        return;
-
     const vec2 a = pts[0].screen_pos;
     const vec2 b = pts[1].screen_pos;
     const vec2 c = pts[2].screen_pos;
