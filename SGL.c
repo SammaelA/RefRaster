@@ -123,42 +123,36 @@ void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pi
     }
 }
 
-void SGL_draw_instances(const mesh *m, const mat4 *matrices, uint32_t instance_count, SGL_Pipeline *p)
+void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
 {
+    const uint32_t total_vertices = instance_count * m->num_vertices;
     SGL_InternalCtx *i_ctx = (SGL_InternalCtx*)p->internal_ctx;
-    if (i_ctx->all_pts_size < m->num_vertices)
+    if (i_ctx->all_pts_size < total_vertices)
     {
-        i_ctx->all_pts_size = m->num_vertices;
+        i_ctx->all_pts_size = total_vertices;
         i_ctx->all_pts = realloc(i_ctx->all_pts, i_ctx->all_pts_size*sizeof(Fragment));
     }
 
-    const mat4 view = look_at(p->cam.pos, p->cam.lookAt, p->cam.up);
-    const mat4 proj = perspective(p->cam.fovy, p->cam.aspect, p->cam.z_near, p->cam.z_far);
-    const mat4 viewProj = mul4x4(proj, view);
-    const mat4 viewInvTransposed = transpose4(inverse4x4(view));
-
-    for (int i = 0; i < m->num_vertices; i++)
+    for (int i = 0; i < instance_count; i++)
     {
-        vec4 pt = vmul4(viewProj, to_vec4(m->verts[i], 1.0f));
-        vec3 pt_NDC = make3(pt.x / pt.w, pt.y / pt.w, pt.z / pt.w);
-
-        i_ctx->all_pts[i].depth = pt_NDC.z;
-        i_ctx->all_pts[i].screen_pos = make2(0.5f*(pt_NDC.x+1.0f)*p->fb.w, 0.5f*(pt_NDC.y+1.0f)*p->fb.h);
-        i_ctx->all_pts[i].tc = m->tcs[i];
-        i_ctx->all_pts[i].norm = norm3(vmul4v(viewInvTransposed, m->normals[i]));
+        for (int j = 0; j < m->num_vertices; j++)
+            i_ctx->all_pts[i*m->num_vertices + j] = p->vs(i, j, m, p->scene_ctx);
     }
 
     Fragment cur_pts[3];
-    for (int i = 0; i < m->num_triangles; i++)
+    for (int i = 0; i < instance_count; i++)
     {
-        cur_pts[0] = i_ctx->all_pts[m->indices[3*i+0]];
-        cur_pts[1] = i_ctx->all_pts[m->indices[3*i+1]];
-        cur_pts[2] = i_ctx->all_pts[m->indices[3*i+2]];
+        for (int j = 0; j < m->num_triangles; j++)
+        {
+            cur_pts[0] = i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+0]];
+            cur_pts[1] = i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+1]];
+            cur_pts[2] = i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+2]];
 
-        if (cur_pts[0].depth < 0.0f || cur_pts[1].depth < 0.0f || cur_pts[2].depth < 0.0f)
-            continue;
+            if (cur_pts[0].depth < 0.0f || cur_pts[1].depth < 0.0f || cur_pts[2].depth < 0.0f)
+                continue;
 
-        rasterize_triangle(cur_pts, &p->fb, p->ps, p->scene_ctx);
+            rasterize_triangle(cur_pts, &p->fb, p->ps, p->scene_ctx);
+        }
     }
 }
 

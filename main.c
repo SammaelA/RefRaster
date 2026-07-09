@@ -35,6 +35,7 @@ void save_framebuffer_to_image_RGB(const Texture_F32 *fb, const char *filename)
 typedef struct
 {
     SGL_Camera cam;
+    mat4 view, proj, viewProj, viewInvTransposed;
 
     mesh m;
     Texture_F32 tex;
@@ -49,6 +50,20 @@ typedef struct
     void *sgl_ctx;
 
 } Scene;
+
+Fragment default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *scene_ctx)
+{
+    const Scene *s = (const Scene *)scene_ctx;
+    const vec4 pt = vmul4(s->viewProj, to_vec4(m->verts[v_id], 1.0f));
+    const vec3 pt_NDC = make3(pt.x / pt.w, pt.y / pt.w, pt.z / pt.w);
+
+    Fragment f;
+    f.depth = pt_NDC.z;
+    f.screen_pos = make2(0.5f*(pt_NDC.x+1.0f)*s->fb.w, 0.5f*(pt_NDC.y+1.0f)*s->fb.h);
+    f.tc = m->tcs[v_id];
+    f.norm = norm3(vmul4v(s->viewInvTransposed, m->normals[v_id]));
+    return f;
+}
 
 vec4 lambert_PS(const Fragment *f, const void *scene_ctx)
 {
@@ -119,18 +134,23 @@ void render_scene(Scene *s)
 {
 clock_t t1 = clock();
 
+    s->view = look_at(s->cam.pos, s->cam.lookAt, s->cam.up);
+    s->proj = perspective(s->cam.fovy, s->cam.aspect, s->cam.z_near, s->cam.z_far);
+    s->viewProj = mul4x4(s->proj, s->view);
+    s->viewInvTransposed = transpose4(inverse4x4(s->view));
+
     SGL_clear_framebuffer(&s->fb, 0.0f);
 
 clock_t t2 = clock();
 
-    mat4 mat = make_ident4x4();
     SGL_Pipeline p;
     p.cam = s->cam;
     p.fb =  s->fb;
     p.ps = lambert_PS;
+    p.vs = default_VS;
     p.scene_ctx = (void *)s;
     p.internal_ctx = s->sgl_ctx;
-    SGL_draw_instances(&(s->m), &mat, 1, &p);
+    SGL_draw_instances(&(s->m), 1, &p);
 
 clock_t t3 = clock();
 

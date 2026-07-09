@@ -46,6 +46,7 @@ typedef struct
 } Texture_U8;
 
 typedef vec4 (*SGL_PixelShader)(const Fragment *f, const void *scene_ctx);
+typedef Fragment (*SGL_VertexShader)(uint32_t instance_id, uint32_t vertex_id, const mesh *m, const void *scene_ctx);
 
 typedef struct
 {
@@ -58,6 +59,7 @@ typedef struct
     SGL_Camera cam;
     Texture_F32 fb;
     SGL_PixelShader ps;
+    SGL_VertexShader vs;
     void *internal_ctx;
     void *scene_ctx;
 } SGL_Pipeline;
@@ -70,7 +72,7 @@ Texture_F32 SGL_init_framebuffer(int w, int h, int ch);
 void SGL_free_framebuffer(Texture_F32 *fb);
 void SGL_clear_framebuffer(Texture_F32 *fb, float value);
 
-void SGL_draw_instances(const mesh *m, const mat4 *matrices, uint32_t instance_count, SGL_Pipeline *p);
+void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p);
 void SGL_resolve_simple(const Texture_F32 fb, Texture_U8 present_buffer);
 
 #endif
