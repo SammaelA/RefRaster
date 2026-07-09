@@ -37,7 +37,7 @@ void* SGL_init_internal_ctx()
 {
     SGL_InternalCtx *i_ctx = malloc(sizeof(SGL_InternalCtx));
     i_ctx->all_pts_size = 1024;
-    i_ctx->all_pts = malloc(i_ctx->all_pts_size*sizeof(Fragment));
+    i_ctx->all_pts = malloc(i_ctx->all_pts_size*sizeof(VertexOut));
     return (void *)i_ctx;
 }
 
@@ -63,14 +63,60 @@ static inline int in_triangle(vec2 p, vec2 a, vec2 b, vec2 c, vec3 *bary)
     return 0;
 }
 
+// Signed distance to the near plane in clip space. Inside (z_ndc >= -1) means d >= 0.
+// A vertex on the plane has w == z_near > 0, so the divide in make_fragment is always safe.
+static inline float near_dist(vec4 c) { return c.w + c.z; }
+
+static inline VertexOut lerp_vertex(VertexOut a, VertexOut b, float t)
+{
+    VertexOut r;
+    r.clip_pos = add4(a.clip_pos, cmul4(t, sub4(b.clip_pos, a.clip_pos)));
+    r.tc       = add2(a.tc,       cmul2(t, sub2(b.tc,       a.tc)));
+    r.norm     = add3(a.norm,     cmul3(t, sub3(b.norm,     a.norm)));
+    return r;
+}
+
+// Sutherland-Hodgman against the single near plane.
+static int clip_near(const VertexOut in[3], VertexOut out[4])
+{
+    int n = 0;
+    for (int i = 0; i < 3; i++)
+    {
+        const VertexOut cur = in[i];
+        const VertexOut nxt = in[(i + 1) % 3];
+        const float dc = near_dist(cur.clip_pos);
+        const float dn = near_dist(nxt.clip_pos);
+
+        if (dc >= 0.0f)
+            out[n++] = cur;
+        if ((dc >= 0.0f) != (dn >= 0.0f))
+            out[n++] = lerp_vertex(cur, nxt, dc / (dc - dn));
+    }
+    return n;
+}
+
+// Perspective divide + viewport transform. Only valid once clip_near has run.
+static Fragment make_fragment(VertexOut v, const Texture_F32 *fb)
+{
+    const float inv_w = 1.0f / v.clip_pos.w;   // w >= z_near > 0 after near clipping
+    Fragment f;
+    f.depth      = v.clip_pos.z * inv_w;
+    f.inv_w      = inv_w;
+    f.screen_pos = make2(0.5f * (v.clip_pos.x * inv_w + 1.0f) * fb->w,
+                         0.5f * (v.clip_pos.y * inv_w + 1.0f) * fb->h);
+    f.tc         = v.tc;
+    f.norm       = v.norm;
+    return f;
+}
+
 void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pixel_shader, const void *scene)
 {
     const vec2 a = pts[0].screen_pos;
     const vec2 b = pts[1].screen_pos;
     const vec2 c = pts[2].screen_pos;
 
-    //back face culling
-    if (signed_area(a, b, c) > 0)
+    // Back face and degenerate triangles culling.
+    if (signed_area(a, b, c) >= -1e-12f)
         return;
 
     // Triangle bounds
@@ -134,7 +180,7 @@ void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
     if (i_ctx->all_pts_size < total_vertices)
     {
         i_ctx->all_pts_size = total_vertices;
-        i_ctx->all_pts = realloc(i_ctx->all_pts, i_ctx->all_pts_size*sizeof(Fragment));
+        i_ctx->all_pts = realloc(i_ctx->all_pts, i_ctx->all_pts_size*sizeof(VertexOut));
     }
 
     for (int i = 0; i < instance_count; i++)
@@ -143,20 +189,29 @@ void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
             i_ctx->all_pts[i*m->num_vertices + j] = p->vs(i, j, m, p->scene_ctx);
     }
 
-    Fragment cur_pts[3];
     for (int i = 0; i < instance_count; i++)
     {
         for (int j = 0; j < m->num_triangles; j++)
         {
-            cur_pts[0] = i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+0]];
-            cur_pts[1] = i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+1]];
-            cur_pts[2] = i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+2]];
+            const VertexOut tri[3] = {
+                i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+0]],
+                i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+1]],
+                i_ctx->all_pts[i*m->num_vertices + m->indices[3*j+2]],
+            };
 
-            // Reject triangles with any vertex at/behind the camera (clip w <= 0).
-            if (cur_pts[0].inv_w <= 0.0f || cur_pts[1].inv_w <= 0.0f || cur_pts[2].inv_w <= 0.0f)
-                continue;
+            VertexOut poly[4];
+            const int n = clip_near(tri, poly);
 
-            rasterize_triangle(cur_pts, &p->fb, p->ps, p->scene_ctx);
+            // Fan-triangulate the clipped polygon: 0, 1, or 2 triangles.
+            for (int k = 1; k + 1 < n; k++)
+            {
+                const Fragment f[3] = {
+                    make_fragment(poly[0],     &p->fb),
+                    make_fragment(poly[k],     &p->fb),
+                    make_fragment(poly[k + 1], &p->fb),
+                };
+                rasterize_triangle(f, &p->fb, p->ps, p->scene_ctx);
+            }
         }
     }
 }

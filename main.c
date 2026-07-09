@@ -12,6 +12,7 @@
 // 1) Basic render (matrix ops + obj loading + camera + window): ~5 hours
 // 2) Refactoring to some king of GL interface: ~2 hours
 // 3) Textures: ~1 hour
+// 4) Bug fixes + basic terrain: ~3 hours
 
 void print3x3(mat3 m)
 {
@@ -40,6 +41,10 @@ typedef struct
     mesh m;
     Texture_F32 tex;
 
+    mesh terrain_mesh;
+    Texture_F32 heightmap;
+    float terrain_area_size;
+
     Texture_F32 fb;
     Texture_U8 present_buffer;
 
@@ -51,19 +56,31 @@ typedef struct
 
 } Scene;
 
-Fragment default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *scene_ctx)
+VertexOut default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *scene_ctx)
 {
     const Scene *s = (const Scene *)scene_ctx;
-    const vec4 pt = vmul4(s->viewProj, to_vec4(m->verts[v_id], 1.0f));
-    const vec3 pt_NDC = make3(pt.x / pt.w, pt.y / pt.w, pt.z / pt.w);
 
-    Fragment f;
-    f.depth = pt_NDC.z;
-    f.inv_w = 1.0f / pt.w;   // pt.w = -z_eye (> 0 in front of the camera)
-    f.screen_pos = make2(0.5f*(pt_NDC.x+1.0f)*s->fb.w, 0.5f*(pt_NDC.y+1.0f)*s->fb.h);
-    f.tc = m->tcs[v_id];
-    f.norm = norm3(vmul4v(s->viewInvTransposed, m->normals[v_id]));
-    return f;
+    VertexOut v;
+    v.clip_pos = vmul4(s->viewProj, to_vec4(m->verts[v_id], 1.0f));
+    v.tc = m->tcs[v_id];
+    v.norm = norm3(vmul4v(s->viewInvTransposed, m->normals[v_id]));
+    return v;
+}
+
+VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *scene_ctx)
+{
+    const Scene *s = (const Scene *)scene_ctx;
+
+    vec3 v_pos = add3(m->verts[v_id], make3(s->cam.pos.x, 0, s->cam.pos.z));
+    const float t_sz = s->terrain_area_size;
+    const vec2 v_tc = make2(0.5f*(v_pos.x+t_sz)/t_sz, 0.5f*(v_pos.z+t_sz)/t_sz);
+    v_pos.y = sample_f32_rgb(&(s->heightmap), v_tc).x;
+
+    VertexOut v;
+    v.clip_pos = vmul4(s->viewProj, to_vec4(v_pos, 1.0f));
+    v.tc = m->tcs[v_id];
+    v.norm = norm3(vmul4v(s->viewInvTransposed, make3(0, 1, 0))); //TODO: terrain normals
+    return v;
 }
 
 vec4 lambert_PS(const Fragment *f, const void *scene_ctx)
@@ -93,12 +110,82 @@ vec4 vis_tc_PS(const Fragment *f, const void *scene_ctx)
     return make4(f->tc.x, f->tc.y, 0.0f, 1.0f);
 }
 
+mesh init_empty_mesh(int n_vert, int n_tri)
+{
+    mesh m;
+    m.num_vertices = n_vert;
+    m.num_triangles = n_tri;
+    m.verts = malloc(m.num_vertices*sizeof(vec3));
+    m.normals = malloc(m.num_vertices*sizeof(vec3));
+    m.tcs = malloc(m.num_vertices*sizeof(vec2));
+    m.indices = malloc(3*m.num_triangles*sizeof(int));  
+
+    return m;
+}
+
+mesh create_terrain_mesh(int N, float size)
+{
+    mesh m = init_empty_mesh((N+1)*(N+1), 2*N*N);
+
+    //vertices
+    for (int i=0;i<=N;i++)
+    {
+        for (int j=0;j<=N;j++)
+        {
+            const uint32_t idx = i*(N+1) + j;
+            vec2 rp = make2((float)j/N, (float)i/N);
+            
+            m.tcs[idx] = rp;
+            m.verts[idx] = make3(size*(2.0f*rp.y-1.0f), 0.0f, size*(2.0f*rp.x-1.0f));
+            m.normals[idx] = make3(0,1,0);
+        }
+    }
+
+    //triangles
+    for (int i=0;i<N;i++)
+    {
+        for (int j=0;j<N;j++)
+        {
+            m.indices[6*(i*N+j) + 0] = (i+0)*(N+1) + (j+0);
+            m.indices[6*(i*N+j) + 1] = (i+0)*(N+1) + (j+1);
+            m.indices[6*(i*N+j) + 2] = (i+1)*(N+1) + (j+1);
+
+            m.indices[6*(i*N+j) + 3] = (i+0)*(N+1) + (j+0);
+            m.indices[6*(i*N+j) + 4] = (i+1)*(N+1) + (j+1);
+            m.indices[6*(i*N+j) + 5] = (i+1)*(N+1) + (j+0);
+        }
+    }
+
+    return m;
+}
+
+Texture_F32 create_heightmap(int W, float amplitude)
+{
+    Texture_F32 hm;
+    hm.w = W;
+    hm.h = W;
+    hm.ch = 1;
+    hm.data = malloc(W*W*sizeof(float));
+
+    for (int i=0; i<W; i++)
+    {
+        for (int j=0; j<W; j++)
+        {
+            vec2 p = make2((float)j/W, (float)i/W);
+            float dist = len2(sub2(p, make2(0.5, 0.5)));
+            hm.data[i*W + j] = amplitude*dist - 1.0f;
+        }
+    }
+
+    return hm;
+}
+
 Scene init_scene(int width, int height, const char *filename)
 {
     Scene s;
 
     s.cam.fovy = M_PI/6;
-    s.cam.pos = make3(0,0,3);
+    s.cam.pos = make3(0,0.5,3);
     s.cam.lookAt = make3(0, 0, 0);
     s.cam.up = make3(0, 1, 0);
     s.cam.z_near = 0.01f;
@@ -119,6 +206,10 @@ Scene init_scene(int width, int height, const char *filename)
     s.fb = SGL_init_framebuffer(width, height, 4);
     s.sgl_ctx = SGL_init_internal_ctx();
 
+    s.heightmap = create_heightmap(512, 20.0f);
+    s.terrain_mesh = create_terrain_mesh(10, 10.0f);
+    s.terrain_area_size = 50;
+
     return s;
 }
 
@@ -129,6 +220,9 @@ void free_scene(Scene *s)
     SGL_free_framebuffer(&s->fb);
     free(s->present_buffer.data);
     SGL_free_internal_ctx(s->sgl_ctx);
+
+    free(s->heightmap.data);
+    free_mesh(&s->terrain_mesh);
 }
 
 void render_scene(Scene *s)
@@ -147,11 +241,16 @@ clock_t t2 = clock();
     SGL_Pipeline p;
     p.cam = s->cam;
     p.fb =  s->fb;
-    p.ps = lambert_PS;
-    p.vs = default_VS;
     p.scene_ctx = (void *)s;
     p.internal_ctx = s->sgl_ctx;
+
+    p.ps = lambert_PS;
+    p.vs = default_VS;
     SGL_draw_instances(&(s->m), 1, &p);
+
+    p.ps = vis_tc_PS;
+    p.vs = terrain_VS;
+    SGL_draw_instances(&(s->terrain_mesh), 1, &p);
 
 clock_t t3 = clock();
 
@@ -185,7 +284,7 @@ float lastX = 0.0f;
 float lastY = 0.0f;
 float yaw = 0.0f, pitch = 0.0f, roll = 0.0f;
 float sensitivity = 0.001f;
-float cameraSpeed = 1.0f;
+float cameraSpeed = 10.0f;
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
     if (firstMouse)

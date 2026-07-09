@@ -23,6 +23,13 @@ typedef struct
 
 typedef struct
 {
+    vec4 clip_pos;   // homogeneous clip-space position, before the perspective divide
+    vec2 tc;
+    vec3 norm;
+} VertexOut;
+
+typedef struct
+{
     vec2 screen_pos;
     vec2 tc;
     float depth;   // NDC z, affine in screen space (used for the depth buffer)
@@ -47,11 +54,11 @@ typedef struct
 } Texture_U8;
 
 typedef vec4 (*SGL_PixelShader)(const Fragment *f, const void *scene_ctx);
-typedef Fragment (*SGL_VertexShader)(uint32_t instance_id, uint32_t vertex_id, const mesh *m, const void *scene_ctx);
+typedef VertexOut (*SGL_VertexShader)(uint32_t instance_id, uint32_t vertex_id, const mesh *m, const void *scene_ctx);
 
 typedef struct
 {
-    Fragment *all_pts;
+    VertexOut *all_pts;
     uint32_t all_pts_size;
 } SGL_InternalCtx;
 
