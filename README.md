@@ -1,4 +1,6 @@
 # RefRaster
 pure C software rasterizer
 
-gcc main.c image_utils.c -o raster -lm -lglfw -lGL -O3 && ./raster /home/sammael/models/Bunny.obj
+cmake -S . -B build_debug -DCMAKE_BUILD_TYPE=Debug && cmake --build build_debug -j16
+
+cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release && cmake --build build_release -j16
