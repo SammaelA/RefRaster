@@ -1,21 +1,22 @@
 #include "SGL.h"
 #include "stdlib.h"
+#include "assert.h"
 
-SGL_FrameBuffer SGL_init_framebuffer(int w, int h, int ch)
+Texture_F32 SGL_init_framebuffer(int w, int h, int ch)
 {
-    SGL_FrameBuffer fb;
+    Texture_F32 fb;
     fb.w = w;
     fb.h = h;
     fb.ch = ch;
     fb.data = malloc(w * h * ch * sizeof(float));
     return fb;
 }
-void SGL_free_framebuffer(SGL_FrameBuffer *fb)
+void SGL_free_framebuffer(Texture_F32 *fb)
 {
     free(fb->data);
     fb->data = NULL;
 }
-void SGL_clear_framebuffer(SGL_FrameBuffer *fb, float value)
+void SGL_clear_framebuffer(Texture_F32 *fb, float value)
 {
     for (int i = 0; i < fb->w * fb->h; i++)
     {
@@ -62,7 +63,7 @@ static inline int in_triangle(vec2 p, vec2 a, vec2 b, vec2 c, vec3 *bary)
     return 0;
 }
 
-void rasterize_triangle(const Fragment *pts, SGL_FrameBuffer *fb, SGL_PixelShader pixel_shader, const void *scene)
+void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pixel_shader, const void *scene)
 {
     const vec2 a = pts[0].screen_pos;
     const vec2 b = pts[1].screen_pos;
@@ -161,13 +162,54 @@ void SGL_draw_instances(const mesh *m, const mat4 *matrices, uint32_t instance_c
     }
 }
 
-void SGL_resolve_simple(const SGL_FrameBuffer fb, unsigned char *present_buffer)
+void SGL_resolve_simple(const Texture_F32 fb, Texture_U8 out)
 {
-    for (int i=0;i<fb.w*fb.h;i++)
+    assert(out.data);
+    assert(fb.data);
+    assert(out.ch == 4);
+
+    if (fb.w == out.w && fb.h == out.h)
     {
-        present_buffer[4*i+0] = 255*clampf(fb.data[4*i+0], 0.0f, 1.0f);
-        present_buffer[4*i+1] = 255*clampf(fb.data[4*i+1], 0.0f, 1.0f);
-        present_buffer[4*i+2] = 255*clampf(fb.data[4*i+2], 0.0f, 1.0f);
-        present_buffer[4*i+3] = 255;
+        for (int i=0;i<fb.w*fb.h;i++)
+        {
+            out.data[4*i+0] = 255*clampf(fb.data[4*i+0], 0.0f, 1.0f);
+            out.data[4*i+1] = 255*clampf(fb.data[4*i+1], 0.0f, 1.0f);
+            out.data[4*i+2] = 255*clampf(fb.data[4*i+2], 0.0f, 1.0f);
+            out.data[4*i+3] = 255;
+        }
     }
+    else
+    {
+        for (int j=0;j<out.h;j++)
+        {
+            for (int i=0;i<out.w;i++)
+            {
+                vec2 tc = make2((float)i/out.w, (float)j/out.h);
+                vec3 res = sample_f32_rgb(&fb, tc);
+                out.data[4*(j*out.w+i)+0] = 255*clampf(res.x, 0.0f, 1.0f);
+                out.data[4*(j*out.w+i)+1] = 255*clampf(res.y, 0.0f, 1.0f);
+                out.data[4*(j*out.w+i)+2] = 255*clampf(res.z, 0.0f, 1.0f);
+                out.data[4*(j*out.w+i)+3] = 255;
+            }
+        }
+    }
+}
+
+vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc)
+{
+    const vec2 tc_t = make2(clampf(tc.x, 0.0f, 1-1e-6f)*tex->w, clampf(tc.y, 0.0f, 1-1e-6f)*tex->h);
+    const vec2 tc_i = make2((int)tc_t.x, (int)tc_t.y);
+    const vec2 dtc  = sub2(tc_t, tc_i);
+
+    vec3 res = make_zero3();
+    const int i = tc_i.x;
+    const int j = tc_i.y;
+    for (int ch=0; ch<mini(3, tex->ch); ch++)
+    {
+        res.M[ch] = (1-dtc.x)*(1-dtc.y)*tex->data[tex->ch*(tex->w*(j+0) + (i+0))+ch] +
+                      (dtc.x)*(1-dtc.y)*tex->data[tex->ch*(tex->w*(j+0) + (i+1))+ch] + 
+                    (1-dtc.x)*  (dtc.y)*tex->data[tex->ch*(tex->w*(j+1) + (i+0))+ch] + 
+                      (dtc.x)*  (dtc.y)*tex->data[tex->ch*(tex->w*(j+1) + (i+1))+ch];
+    }   
+    return res;
 }

@@ -27,34 +27,9 @@ void print4x4(mat4 m)
     printf("%f, %f, %f, %f\n", m.cols[3].x, m.cols[3].y, m.cols[3].z, m.cols[3].w);
 }
 
-void save_framebuffer_to_image_RGB(const SGL_FrameBuffer *fb, const char *filename)
+void save_framebuffer_to_image_RGB(const Texture_F32 *fb, const char *filename)
 {
     save_image_f32_png_rgb(fb->data, filename, fb->w, fb->h, fb->ch, 1.0f);
-}
-
-typedef struct 
-{
-    int w, h, channels;
-    float *data;
-} Texture_F32;
-
-vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc)
-{
-    const vec2 tc_t = make2(clampf(tc.x, 0.0f, 1-1e-6f)*tex->w, clampf(tc.y, 0.0f, 1-1e-6f)*tex->h);
-    const vec2 tc_i = make2((int)tc_t.x, (int)tc_t.y);
-    const vec2 dtc  = sub2(tc_t, tc_i);
-
-    vec3 res = make_zero3();
-    const int i = tc_i.x;
-    const int j = tc_i.y;
-    for (int ch=0; ch<tex->channels; ch++)
-    {
-        res.M[ch] = (1-dtc.x)*(1-dtc.y)*tex->data[tex->channels*(tex->w*(j+0) + (i+0))+ch] +
-                      (dtc.x)*(1-dtc.y)*tex->data[tex->channels*(tex->w*(j+0) + (i+1))+ch] + 
-                    (1-dtc.x)*  (dtc.y)*tex->data[tex->channels*(tex->w*(j+1) + (i+0))+ch] + 
-                      (dtc.x)*  (dtc.y)*tex->data[tex->channels*(tex->w*(j+1) + (i+1))+ch];
-    }   
-    return res;
 }
 
 typedef struct
@@ -64,8 +39,8 @@ typedef struct
     mesh m;
     Texture_F32 tex;
 
-    SGL_FrameBuffer fb;
-    unsigned char *present_buffer;
+    Texture_F32 fb;
+    Texture_U8 present_buffer;
 
     vec3  light_dir;
     float light_intensity;
@@ -117,7 +92,7 @@ Scene init_scene(int width, int height, const char *filename)
     s.m = load_obj(filename);
 
     s.tex.data = load_image_f32_rgb("resources/porcelain.jpg", &(s.tex.w), &(s.tex.h), 2.2f);
-    s.tex.channels = 3;
+    s.tex.ch = 3;
     if (s.tex.data == NULL)
         printf("failed to load texture\n");
 
@@ -126,7 +101,6 @@ Scene init_scene(int width, int height, const char *filename)
     s.ambient_light_intensity = 0.33f;
 
     s.fb = SGL_init_framebuffer(width, height, 4);
-    s.present_buffer = malloc(4 * width * height);
     s.sgl_ctx = SGL_init_internal_ctx();
 
     return s;
@@ -137,7 +111,7 @@ void free_scene(Scene *s)
     free_mesh(&s->m);
     free(s->tex.data);
     SGL_free_framebuffer(&s->fb);
-    free(s->present_buffer);
+    free(s->present_buffer.data);
     SGL_free_internal_ctx(s->sgl_ctx);
 }
 
@@ -248,7 +222,14 @@ int main(int argc, char **argv)
     const char *filename = argv[1];
     int width  = argc > 2 ? atoi(argv[2]) : 640;
     int height = argc > 3 ? atoi(argv[3]) : 480;
-    Scene scene = init_scene(width, height, filename);
+    int fb_width = argc > 4 ? atoi(argv[4]) : 640;
+    int fb_height = argc > 5 ? atoi(argv[5]) : 480;
+    Scene scene = init_scene(fb_width, fb_height, filename);
+    scene.present_buffer.data = malloc(4 * width * height);
+    scene.present_buffer.w = width;
+    scene.present_buffer.h = height;
+    scene.present_buffer.ch = 4;
+
     GLFWwindow *window;
     
     if (!glfwInit())
@@ -277,7 +258,7 @@ int main(int argc, char **argv)
         double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;   
         dt = time_spent;  
         
-        glDrawPixels(width, height, GL_RGBA, GL_UNSIGNED_BYTE, scene.present_buffer);
+        glDrawPixels(width, height, GL_RGBA, GL_UNSIGNED_BYTE, scene.present_buffer.data);
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
