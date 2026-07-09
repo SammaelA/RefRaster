@@ -203,8 +203,10 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos)
     xoffset *= sensitivity;
     yoffset *= sensitivity;
 
-    yaw   += xoffset;
-    pitch += yoffset;
+    // Negated so mouse-right looks right and mouse-up looks up with the corrected
+    // (non-transposed) rotation matrix.
+    yaw   -= xoffset;
+    pitch -= yoffset;
 
     if(pitch > M_PI/2.0f - 0.01f)
         pitch = M_PI/2.0f - 0.01f;

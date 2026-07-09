@@ -352,15 +352,11 @@ static inline mat3 rotate_euler3x3_zyx(float x, float y, float z)
     sx = sinf(x);
     sy = sinf(y);
     sz = sinf(z);
-    // sincosf(x, &sx, &cx);
-    // sincosf(y, &sy, &cy);
-    // sincosf(z, &sz, &cz);
 
-    mat3 m;
-    m.cols[0] = make3(cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz);
-    m.cols[1] = make3(cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz);
-    m.cols[2] = make3(-sy, sx * cy, cx * cy);
-    return m;
+    vec3 r0 = make3(cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz);
+    vec3 r1 = make3(cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz);
+    vec3 r2 = make3(-sy, sx * cy, cx * cy);
+    return make3x3_rows(r0, r1, r2);
 }
 static inline mat3 scale3x3(float s)
 {
