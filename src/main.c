@@ -76,12 +76,23 @@ VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void 
     vec3 v_pos = add3(m->verts[v_id], make3(s->cam.pos.x, 0, s->cam.pos.z));
     const float t_sz = s->terrain_area_size;
     const vec2 v_tc = make2(0.5f*(v_pos.x+t_sz)/t_sz, 0.5f*(v_pos.z+t_sz)/t_sz);
-    v_pos.y = sample_f32_rgb(&(s->heightmap), v_tc).x;
+
+    vec2 dxy;
+    const vec4 h_quad = gather_f32(&(s->heightmap), v_tc, 0, &dxy);
+
+    v_pos.y = (1-dxy.x)*(1-dxy.y)*h_quad.x + 
+                  dxy.x*(1-dxy.y)*h_quad.y + 
+                  (1-dxy.x)*dxy.y*h_quad.z + 
+                      dxy.x*dxy.y*h_quad.w;
+
+    const float dh_dx = (1-dxy.y)*(h_quad.y - h_quad.x) + dxy.y*(h_quad.w - h_quad.z);
+    const float dh_dy = (1-dxy.x)*(h_quad.z - h_quad.x) + dxy.x*(h_quad.w - h_quad.y);
+    const vec3 v_norm = norm3(make3(-dh_dx, 1.0f, -dh_dy));
 
     VertexOut v;
     v.clip_pos = vmul4(s->viewProj, to_vec4(v_pos, 1.0f));
     v.tc = m->tcs[v_id];
-    v.norm = norm3(vmul4v(s->viewInvTransposed, make3(0, 1, 0))); //TODO: terrain normals
+    v.norm = norm3(vmul4v(s->viewInvTransposed, v_norm));
     return v;
 }
 
@@ -209,7 +220,7 @@ Scene init_scene(int width, int height, const char *filename)
     s.fb = SGL_init_framebuffer(width, height, 4);
     s.sgl_ctx = SGL_init_internal_ctx();
 
-    s.heightmap = create_heightmap(512, 1.0f);
+    s.heightmap = create_heightmap(512, 3.0f);
     s.terrain_mesh = create_terrain_mesh(64, 10.0f);
     s.terrain_area_size = 50;
     save_image_f32_png_rgb(s.heightmap.data, "saves/heightmap.png", s.heightmap.w, s.heightmap.h, s.heightmap.ch, 2.2f);
@@ -253,7 +264,7 @@ clock_t t2 = clock();
     p.vs = default_VS;
     SGL_draw_instances(&(s->m), 1, &p);
 
-    p.ps = vis_normal_PS;
+    p.ps = lambert_no_tex_PS;
     p.vs = terrain_VS;
     SGL_draw_instances(&(s->terrain_mesh), 1, &p);
 
