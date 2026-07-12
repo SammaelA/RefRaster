@@ -15,6 +15,7 @@
 // 3) Textures: ~1 hour
 // 4) Bug fixes + basic terrain: ~3 hours
 // 5) Perlin + terrain normals/textures/movement: ~3 hours
+// 6) Cubemap: ~1 hour
 
 void print3x3(mat3 m)
 {
