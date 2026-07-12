@@ -37,7 +37,8 @@ void save_framebuffer_to_image_RGB(const Texture_F32 *fb, const char *filename)
 typedef struct
 {
     SGL_Camera cam;
-    mat4 view, proj, viewProj, viewInvTransposed;
+    mat4 view, proj, viewProj;
+    mat4 viewInvTransposed, viewInvTransposedInv;
 
     mesh m;
     Texture_F32 tex;
@@ -93,6 +94,13 @@ vec4 lambert_PS(const Fragment *f, const void *scene_ctx)
     const vec3 col = cmul3(q, albedo);
 
     return to_vec4(col, 1.0f);
+}
+
+vec4 vis_normal_PS(const Fragment *f, const void *scene_ctx)
+{
+    const Scene *s = (const Scene *)scene_ctx;
+    const vec3 n_world = vmul4v(s->viewInvTransposedInv, f->norm);
+    return to_vec4(add3(make3(0.25f, 0.25f, 0.25f), cmul3(0.5f, pow3(abs3(n_world), 1.0f/1.5f))), 1.0f);
 }
 
 vec4 lambert_no_tex_PS(const Fragment *f, const void *scene_ctx)
@@ -229,6 +237,7 @@ clock_t t1 = clock();
     s->proj = perspective(s->cam.fovy, s->cam.aspect, s->cam.z_near, s->cam.z_far);
     s->viewProj = mul4x4(s->proj, s->view);
     s->viewInvTransposed = transpose4(inverse4x4(s->view));
+    s->viewInvTransposedInv = inverse4x4(s->viewInvTransposed);
 
     SGL_clear_framebuffer(&s->fb, 0.0f);
 
@@ -244,7 +253,7 @@ clock_t t2 = clock();
     p.vs = default_VS;
     SGL_draw_instances(&(s->m), 1, &p);
 
-    p.ps = vis_tc_PS;
+    p.ps = vis_normal_PS;
     p.vs = terrain_VS;
     SGL_draw_instances(&(s->terrain_mesh), 1, &p);
 

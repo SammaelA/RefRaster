@@ -76,6 +76,8 @@ void* SGL_init_internal_ctx();
 void SGL_free_internal_ctx(SGL_InternalCtx *i_ctx);
 
 vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc);
+vec4 gather_f32(const Texture_F32 *tex, vec2 tc, int channel, vec2 *out_dtc);
+
 Texture_F32 SGL_init_framebuffer(int w, int h, int ch);
 void SGL_free_framebuffer(Texture_F32 *fb);
 void SGL_clear_framebuffer(Texture_F32 *fb, float value);

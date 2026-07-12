@@ -221,6 +221,16 @@ static inline float dot3(vec3 a, vec3 b)
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
+static inline vec3 abs3(vec3 v)
+{
+    return make3(fabsf(v.x), fabsf(v.y), fabsf(v.z));
+}
+
+static inline vec3 pow3(vec3 v, float p)
+{
+    return make3(powf(v.x, p), powf(v.y, p), powf(v.z, p));
+}
+
 static inline vec4 make_zero4()
 {
     vec4 v;

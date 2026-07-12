@@ -267,3 +267,19 @@ vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc)
     }   
     return res;
 }
+
+vec4 gather_f32_r(const Texture_F32 *tex, vec2 tc, int ch, vec2 *out_dtc)
+{
+    const vec2 tc_t = make2(clampf(tc.x, 0.0f, 1-1e-6f)*tex->w, clampf(tc.y, 0.0f, 1-1e-6f)*tex->h);
+    const vec2 tc_i = make2((int)tc_t.x, (int)tc_t.y);
+    const int i = tc_i.x;
+    const int j = tc_i.y;
+
+    if (out_dtc)
+        *out_dtc = sub2(tc_t, tc_i);
+
+    return make4(tex->data[tex->ch*(tex->w*(j+0) + (i+0))+ch],
+                 tex->data[tex->ch*(tex->w*(j+0) + (i+1))+ch],
+                 tex->data[tex->ch*(tex->w*(j+1) + (i+0))+ch],
+                 tex->data[tex->ch*(tex->w*(j+1) + (i+1))+ch]);
+}
