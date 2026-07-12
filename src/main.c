@@ -2,6 +2,7 @@
 #include "vectors.h"
 #include "mesh_utils.h"
 #include "SGL.h"
+#include "perlin_noise.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -166,16 +167,10 @@ Texture_F32 create_heightmap(int W, float amplitude)
     hm.h = W;
     hm.ch = 1;
     hm.data = malloc(W*W*sizeof(float));
+    generate_perlin(hm.data, W, W, 0.025f, 12345);
 
-    for (int i=0; i<W; i++)
-    {
-        for (int j=0; j<W; j++)
-        {
-            vec2 p = make2((float)j/W, (float)i/W);
-            float dist = len2(sub2(p, make2(0.5, 0.5)));
-            hm.data[i*W + j] = amplitude*dist - 1.0f;
-        }
-    }
+    for (int i=0;i<W*W;i++)
+        hm.data[i] *= amplitude;
 
     return hm;
 }
@@ -206,9 +201,10 @@ Scene init_scene(int width, int height, const char *filename)
     s.fb = SGL_init_framebuffer(width, height, 4);
     s.sgl_ctx = SGL_init_internal_ctx();
 
-    s.heightmap = create_heightmap(512, 20.0f);
-    s.terrain_mesh = create_terrain_mesh(10, 10.0f);
+    s.heightmap = create_heightmap(512, 1.0f);
+    s.terrain_mesh = create_terrain_mesh(64, 10.0f);
     s.terrain_area_size = 50;
+    save_image_f32_png_rgb(s.heightmap.data, "saves/heightmap.png", s.heightmap.w, s.heightmap.h, s.heightmap.ch, 2.2f);
 
     return s;
 }

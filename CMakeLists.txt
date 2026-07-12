@@ -6,15 +6,13 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-set(SOURCES src/main.c src/image_utils.c src/mesh_utils.c src/SGL.c)
+set(SOURCES src/main.c src/image_utils.c src/mesh_utils.c src/SGL.c src/perlin_noise.c)
 
 add_executable(raster ${SOURCES})
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(raster PUBLIC -Wall -Wno-unused-function -O0 -g)
 else()
-    # No -ffast-math: it implies -ffinite-math-only, which lets the compiler assume NaN/Inf
-    # never occur and fold away the depth test's implicit NaN rejection.
     target_compile_options(raster PUBLIC -Wall -Wno-unused-function -O3 -march=native)
 endif()
 

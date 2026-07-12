@@ -8,6 +8,7 @@ static float minf(float a, float b) { return a < b ? a : b; }
 static float maxf(float a, float b) { return a > b ? a : b; }
 static float clampf(float x, float min, float max) { return minf(maxf(x, min), max); }
 static float absf(float x) { return x < 0.0f ? -x : x; }
+static float lerpf(float t, float a, float b) { return a + t * (b - a); }
 
 static int mini(int a, int b) { return a < b ? a : b; }
 static int maxi(int a, int b) { return a > b ? a : b; }
