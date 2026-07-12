@@ -14,7 +14,7 @@
 // 2) Refactoring to some king of GL interface: ~2 hours
 // 3) Textures: ~1 hour
 // 4) Bug fixes + basic terrain: ~3 hours
-// 5) Perlin + terrain normals: ~1.5 hours
+// 5) Perlin + terrain normals/textures/movement: ~3 hours
 
 void print3x3(mat3 m)
 {
@@ -77,7 +77,7 @@ VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void 
 {
     const Scene *s = (const Scene *)scene_ctx;
 
-    vec3 v_pos = add3(m->verts[v_id], make3(s->cam.pos.x, 0, s->cam.pos.z));
+    vec3 v_pos = add3(m->verts[v_id], make3(floorf(s->cam.pos.x), 0, floorf(s->cam.pos.z)));
     const float t_sz = s->terrain_area_size;
     const vec2 v_tc = make2(0.5f*(v_pos.x+t_sz)/t_sz, 0.5f*(v_pos.z+t_sz)/t_sz);
 
@@ -249,7 +249,7 @@ Scene init_scene(int width, int height, const char *filename)
     s.grass = load_tex("resources/textures/Grass_09-256x256.png");
     s.rocky_grass = load_tex("resources/textures/Grass_11-256x256.png");
     s.heightmap = create_heightmap(1024, 5.0f);
-    s.terrain_mesh = create_terrain_mesh(64, 10.0f);
+    s.terrain_mesh = create_terrain_mesh(100, 10.0f);
     s.terrain_area_size = 50;
     s.terrain_tile_size_inv = 0.5f;
     //save_image_f32_png_rgb(s.heightmap.data, "saves/heightmap.png", s.heightmap.w, s.heightmap.h, s.heightmap.ch, 1.0f);
@@ -329,7 +329,10 @@ float lastX = 0.0f;
 float lastY = 0.0f;
 float yaw = 0.0f, pitch = 0.0f, roll = 0.0f;
 float sensitivity = 0.001f;
-float cameraSpeed = 10.0f;
+float cameraSpeed = 1.0f;
+float terrainCameraHeight = 0.1f;
+float freeCameraSpeedMult = 10.0f;
+int freeCamera = 1;
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
     if (firstMouse)
@@ -364,19 +367,37 @@ void process_input(GLFWwindow *window, Scene *s, float dt)
     s->cam.up = rot.cols[1];
     vec3 cameraFront = cmul3(-1.0f, rot.cols[2]);
 
+    const float cs = (freeCamera ? freeCameraSpeedMult : 1.0f) * cameraSpeed * dt;
+
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        s->cam.pos = add3(s->cam.pos, cmul3(cameraSpeed*dt, cameraFront));
+        s->cam.pos = add3(s->cam.pos, cmul3( cs, cameraFront));
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        s->cam.pos = add3(s->cam.pos, cmul3(-1.0f*cameraSpeed*dt, cameraFront));
+        s->cam.pos = add3(s->cam.pos, cmul3(-cs, cameraFront));
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        s->cam.pos = add3(s->cam.pos, cmul3(cameraSpeed*dt, norm3(cross3(cameraFront, s->cam.up))));
+        s->cam.pos = add3(s->cam.pos, cmul3( cs, norm3(cross3(cameraFront, s->cam.up))));
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        s->cam.pos = add3(s->cam.pos, cmul3(-1.0f*cameraSpeed*dt, norm3(cross3(cameraFront, s->cam.up))));
+        s->cam.pos = add3(s->cam.pos, cmul3(-cs, norm3(cross3(cameraFront, s->cam.up))));
 
     s->cam.lookAt = add3(s->cam.pos, cameraFront);
 
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, 1);
+}
+
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    if (key == GLFW_KEY_C && action == GLFW_PRESS)
+        freeCamera = freeCamera ? 0 : 1;
+}
+
+void on_terrain_set_camera(Scene *s)
+{
+    const float t_sz = s->terrain_area_size;
+    const vec2 v_tc = make2(0.5f*(s->cam.pos.x+t_sz)/t_sz, 0.5f*(s->cam.pos.z+t_sz)/t_sz);
+
+    const float h = sample_f32_rgb(&(s->heightmap), v_tc).x;
+
+    s->cam.pos = make3(s->cam.pos.x, h+terrainCameraHeight, s->cam.pos.z);
 }
 
 int main(int argc, char **argv)
@@ -412,12 +433,16 @@ int main(int argc, char **argv)
     glfwMakeContextCurrent(window);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED); 
     glfwSetCursorPosCallback(window, mouse_callback);  
+    glfwSetKeyCallback(window, key_callback);
     
     // Main loop
     float dt = 0;
     while (!glfwWindowShouldClose(window)) 
     {
         process_input(window, &scene, dt);
+
+        if (freeCamera == 0)
+            on_terrain_set_camera(&scene);
 
         clock_t begin = clock();
         render_scene(&scene);
