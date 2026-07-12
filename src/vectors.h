@@ -9,6 +9,7 @@ static float maxf(float a, float b) { return a > b ? a : b; }
 static float clampf(float x, float min, float max) { return minf(maxf(x, min), max); }
 static float absf(float x) { return x < 0.0f ? -x : x; }
 static float lerpf(float t, float a, float b) { return a + t * (b - a); }
+static float fractf(float x) { return x - floorf(x); }
 
 static int mini(int a, int b) { return a < b ? a : b; }
 static int maxi(int a, int b) { return a > b ? a : b; }
@@ -229,6 +230,15 @@ static inline vec3 abs3(vec3 v)
 static inline vec3 pow3(vec3 v, float p)
 {
     return make3(powf(v.x, p), powf(v.y, p), powf(v.z, p));
+}
+
+static inline vec3 lerp3(float t, vec3 a, vec3 b)
+{
+    vec3 v;
+    v.x = a.x + t * (b.x - a.x);
+    v.y = a.y + t * (b.y - a.y);
+    v.z = a.z + t * (b.z - a.z);
+    return v;
 }
 
 static inline vec4 make_zero4()

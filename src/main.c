@@ -46,7 +46,10 @@ typedef struct
 
     mesh terrain_mesh;
     Texture_F32 heightmap;
+    Texture_F32 grass;
+    Texture_F32 rocky_grass;
     float terrain_area_size;
+    float terrain_tile_size_inv;
 
     Texture_F32 fb;
     Texture_U8 present_buffer;
@@ -92,9 +95,27 @@ VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void 
 
     VertexOut v;
     v.clip_pos = vmul4(s->viewProj, to_vec4(v_pos, 1.0f));
-    v.tc = m->tcs[v_id];
+    v.tc = make2(v_pos.x, v_pos.z);
     v.norm = norm3(vmul4v(s->viewInvTransposed, v_norm));
     return v;
+}
+
+vec4 terrain_PS(const Fragment *f, const void *scene_ctx)   
+{
+    const Scene *s = (const Scene *)scene_ctx;
+
+    const vec2 tc = make2(2.0f*absf(fractf(s->terrain_tile_size_inv*f->tc.x)-0.5f), 
+                          2.0f*absf(fractf(s->terrain_tile_size_inv*f->tc.y)-0.5f));
+
+    const vec3 nw = vmul4v(s->viewInvTransposedInv, f->norm);
+    const float slope_q = clampf(3.0f*sqrtf(sqrtf(nw.x*nw.x + nw.z*nw.z) / nw.y), 0.0f, 1.0f);
+    const vec3 albedo_grass = slope_q < 0.99f ? sample_f32_rgb(&(s->grass), tc) : make3(0.0f, 1.0f, 0.0f);
+    const vec3 albedo_rocky = slope_q > 0.01f ? sample_f32_rgb(&(s->rocky_grass), tc) : albedo_grass;
+    const vec3 albedo = lerp3(slope_q, albedo_grass, albedo_rocky);
+    float q = maxf(0.0f, dot3(f->norm, s->light_dir))*s->light_intensity + s->ambient_light_intensity;
+    const vec3 col = cmul3(q, albedo);
+
+    return to_vec4(col, 1.0f);
 }
 
 vec4 lambert_PS(const Fragment *f, const void *scene_ctx)
@@ -195,6 +216,14 @@ Texture_F32 create_heightmap(int W, float amplitude)
     return hm;
 }
 
+Texture_F32 load_tex(const char *filename)
+{
+    Texture_F32 tex;
+    tex.data = load_image_f32_rgb(filename, &(tex.w), &(tex.h), 2.2f);
+    tex.ch = 3;
+    return tex;
+}
+
 Scene init_scene(int width, int height, const char *filename)
 {
     Scene s;
@@ -208,11 +237,7 @@ Scene init_scene(int width, int height, const char *filename)
     s.cam.aspect = (float)width/(float)height;
 
     s.m = load_obj(filename);
-
-    s.tex.data = load_image_f32_rgb("resources/porcelain.jpg", &(s.tex.w), &(s.tex.h), 2.2f);
-    s.tex.ch = 3;
-    if (s.tex.data == NULL)
-        printf("failed to load texture\n");
+    s.tex = load_tex("resources/textures/porcelain.jpg");
 
     s.light_dir = norm3(make3(1,1,1));
     s.light_intensity = 1.0f;
@@ -221,10 +246,13 @@ Scene init_scene(int width, int height, const char *filename)
     s.fb = SGL_init_framebuffer(width, height, 4);
     s.sgl_ctx = SGL_init_internal_ctx();
 
-    s.heightmap = create_heightmap(1024, 1.0f);
+    s.grass = load_tex("resources/textures/Grass_09-256x256.png");
+    s.rocky_grass = load_tex("resources/textures/Grass_11-256x256.png");
+    s.heightmap = create_heightmap(1024, 5.0f);
     s.terrain_mesh = create_terrain_mesh(64, 10.0f);
     s.terrain_area_size = 50;
-    save_image_f32_png_rgb(s.heightmap.data, "saves/heightmap.png", s.heightmap.w, s.heightmap.h, s.heightmap.ch, 1.0f);
+    s.terrain_tile_size_inv = 0.5f;
+    //save_image_f32_png_rgb(s.heightmap.data, "saves/heightmap.png", s.heightmap.w, s.heightmap.h, s.heightmap.ch, 1.0f);
 
     return s;
 }
@@ -261,11 +289,11 @@ clock_t t2 = clock();
     p.scene_ctx = (void *)s;
     p.internal_ctx = s->sgl_ctx;
 
-    p.ps = lambert_PS;
-    p.vs = default_VS;
-    SGL_draw_instances(&(s->m), 1, &p);
+    // p.ps = lambert_PS;
+    // p.vs = default_VS;
+    // SGL_draw_instances(&(s->m), 1, &p);
 
-    p.ps = lambert_no_tex_PS;
+    p.ps = terrain_PS;
     p.vs = terrain_VS;
     SGL_draw_instances(&(s->terrain_mesh), 1, &p);
 

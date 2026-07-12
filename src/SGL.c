@@ -226,10 +226,23 @@ void SGL_resolve_simple(const Texture_F32 fb, Texture_U8 out)
     {
         for (int i=0;i<fb.w*fb.h;i++)
         {
-            out.data[4*i+0] = 255*clampf(fb.data[4*i+0], 0.0f, 1.0f);
-            out.data[4*i+1] = 255*clampf(fb.data[4*i+1], 0.0f, 1.0f);
-            out.data[4*i+2] = 255*clampf(fb.data[4*i+2], 0.0f, 1.0f);
+            out.data[4*i+0] = 255*clampf(fb.data[fb.ch*i+0], 0.0f, 1.0f);
+            out.data[4*i+1] = 255*clampf(fb.data[fb.ch*i+1], 0.0f, 1.0f);
+            out.data[4*i+2] = 255*clampf(fb.data[fb.ch*i+2], 0.0f, 1.0f);
             out.data[4*i+3] = 255;
+        }
+    }
+    else if (2*fb.w == out.w && 2*fb.h == out.h)
+    {
+        for (int j=0;j<out.h;j++)
+        {
+            for (int i=0;i<out.w;i++)
+            {
+                out.data[4*(j*out.w+i)+0] = 255*clampf(fb.data[fb.ch*((j/2)*fb.w + (i/2))+0], 0.0f, 1.0f);
+                out.data[4*(j*out.w+i)+1] = 255*clampf(fb.data[fb.ch*((j/2)*fb.w + (i/2))+1], 0.0f, 1.0f);
+                out.data[4*(j*out.w+i)+2] = 255*clampf(fb.data[fb.ch*((j/2)*fb.w + (i/2))+2], 0.0f, 1.0f);
+                out.data[4*(j*out.w+i)+3] = 255;
+            }
         }
     }
     else
@@ -258,12 +271,14 @@ vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc)
     vec3 res = make_zero3();
     const int i = tc_i.x;
     const int j = tc_i.y;
+    const int di = (i == tex->w-1) ? 0 : 1;
+    const int dj = (j == tex->h-1) ? 0 : 1;
     for (int ch=0; ch<mini(3, tex->ch); ch++)
     {
         res.M[ch] = (1-dtc.x)*(1-dtc.y)*tex->data[tex->ch*(tex->w*(j+0) + (i+0))+ch] +
-                      (dtc.x)*(1-dtc.y)*tex->data[tex->ch*(tex->w*(j+0) + (i+1))+ch] + 
-                    (1-dtc.x)*  (dtc.y)*tex->data[tex->ch*(tex->w*(j+1) + (i+0))+ch] + 
-                      (dtc.x)*  (dtc.y)*tex->data[tex->ch*(tex->w*(j+1) + (i+1))+ch];
+                      (dtc.x)*(1-dtc.y)*tex->data[tex->ch*(tex->w*(j+0) + (i+di))+ch] + 
+                    (1-dtc.x)*  (dtc.y)*tex->data[tex->ch*(tex->w*(j+dj) + (i+0))+ch] + 
+                      (dtc.x)*  (dtc.y)*tex->data[tex->ch*(tex->w*(j+dj) + (i+di))+ch];
     }   
     return res;
 }
