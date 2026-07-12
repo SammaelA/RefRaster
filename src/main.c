@@ -14,6 +14,7 @@
 // 2) Refactoring to some king of GL interface: ~2 hours
 // 3) Textures: ~1 hour
 // 4) Bug fixes + basic terrain: ~3 hours
+// 5) Perlin + terrain normals: ~1.5 hours
 
 void print3x3(mat3 m)
 {
@@ -186,7 +187,7 @@ Texture_F32 create_heightmap(int W, float amplitude)
     hm.h = W;
     hm.ch = 1;
     hm.data = malloc(W*W*sizeof(float));
-    generate_perlin(hm.data, W, W, 0.025f, 12345);
+    generate_perlin(hm.data, W, W, 0.005f, 5, 12345u);
 
     for (int i=0;i<W*W;i++)
         hm.data[i] *= amplitude;
@@ -199,7 +200,7 @@ Scene init_scene(int width, int height, const char *filename)
     Scene s;
 
     s.cam.fovy = M_PI/6;
-    s.cam.pos = make3(0,0.5,3);
+    s.cam.pos = make3(0,3,3);
     s.cam.lookAt = make3(0, 0, 0);
     s.cam.up = make3(0, 1, 0);
     s.cam.z_near = 0.01f;
@@ -220,10 +221,10 @@ Scene init_scene(int width, int height, const char *filename)
     s.fb = SGL_init_framebuffer(width, height, 4);
     s.sgl_ctx = SGL_init_internal_ctx();
 
-    s.heightmap = create_heightmap(512, 3.0f);
+    s.heightmap = create_heightmap(1024, 1.0f);
     s.terrain_mesh = create_terrain_mesh(64, 10.0f);
     s.terrain_area_size = 50;
-    save_image_f32_png_rgb(s.heightmap.data, "saves/heightmap.png", s.heightmap.w, s.heightmap.h, s.heightmap.ch, 2.2f);
+    save_image_f32_png_rgb(s.heightmap.data, "saves/heightmap.png", s.heightmap.w, s.heightmap.h, s.heightmap.ch, 1.0f);
 
     return s;
 }

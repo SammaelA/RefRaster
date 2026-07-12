@@ -64,7 +64,22 @@ static float noise_2D(float x, float y, const uint32_t *p_table)
     return lerpf(u, lerpf(v, dots[0], dots[1]), lerpf(v, dots[2], dots[3]));
 }
 
-void generate_perlin(float *out, uint32_t width, uint32_t height, float scale, uint32_t seed)
+static float fractal_brownian_motion(float x, float y, const uint32_t *p_table, float base_freq, uint32_t octaves)
+{
+    float res = 0.0f;
+    float amplitude = 1.0f;
+    float freq = base_freq;
+    for (int i = 0; i < octaves; i++)
+    {
+        res += noise_2D(x * freq, y * freq, p_table) * amplitude;
+        freq *= 2.0f;
+        amplitude *= 0.5f;
+    }
+
+    return res;
+}
+
+void generate_perlin(float *out, uint32_t width, uint32_t height, float base_freq, uint32_t octaves, uint32_t seed)
 {
     uint32_t permutation[PERLIN_PCOUNT];
     for (int i = 0; i < PERLIN_PCOUNT; i++)
@@ -77,5 +92,5 @@ void generate_perlin(float *out, uint32_t width, uint32_t height, float scale, u
 
     for (int y = 0; y < height; y++)
         for (int x = 0; x < width; x++)
-            out[y * width + x] = noise_2D(x * scale, y * scale, permutation);
+            out[y * width + x] = 0.5f*(fractal_brownian_motion(x, y, permutation, base_freq, octaves)+1.0f);
 }
