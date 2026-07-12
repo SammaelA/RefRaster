@@ -51,6 +51,9 @@ typedef struct
     float terrain_area_size;
     float terrain_tile_size_inv;
 
+    mesh cubemap_mesh;
+    Texture_F32 cubemap_tex[6];
+
     Texture_F32 fb;
     Texture_U8 present_buffer;
 
@@ -71,6 +74,24 @@ VertexOut default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void 
     v.tc = m->tcs[v_id];
     v.norm = norm3(vmul4v(s->viewInvTransposed, m->normals[v_id]));
     return v;
+}
+
+VertexOut cubemap_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *scene_ctx)
+{
+    const Scene *s = (const Scene *)scene_ctx;
+
+    VertexOut v;
+    v.clip_pos = vmul4(s->viewProj, to_vec4(add3(cmul3(100.0f, m->verts[v_id]), s->cam.pos), 1.0f));
+    v.tc = m->tcs[v_id];
+    v.norm = norm3(vmul4v(s->viewInvTransposed, m->normals[v_id]));
+    return v;
+}
+
+vec4 cubemap_PS(const Fragment *f, const void *scene_ctx)
+{
+    const Scene *s = (const Scene *)scene_ctx;
+    const vec3 col = sample_f32_rgb(&(s->cubemap_tex[f->frag_id/2]), f->tc);
+    return to_vec4(col, 1.0f);
 }
 
 VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *scene_ctx)
@@ -216,12 +237,74 @@ Texture_F32 create_heightmap(int W, float amplitude)
     return hm;
 }
 
-Texture_F32 load_tex(const char *filename)
+#define CUBEMAP_FRONT  0
+#define CUBEMAP_BACK   1
+#define CUBEMAP_LEFT   2
+#define CUBEMAP_RIGHT  3
+#define CUBEMAP_BOTTOM 4
+#define CUBEMAP_TOP    5
+
+mesh create_cubemap_mesh()
+{
+    #define SET_VERT(i, j, x, y, z, u, v) do { m.verts[4*i+j] = make3(x, y, z); m.normals[4*i+j] = make3(1,0,0); m.tcs[4*i+j] = make2(u, v); } while (0)
+    mesh m = init_empty_mesh(24, 12);
+
+    SET_VERT(CUBEMAP_FRONT,0, -1,-1,-1, 0,0);
+    SET_VERT(CUBEMAP_FRONT,1,  1,-1,-1, 1,0);
+    SET_VERT(CUBEMAP_FRONT,2, -1, 1,-1, 0,1);
+    SET_VERT(CUBEMAP_FRONT,3,  1, 1,-1, 1,1);
+
+    SET_VERT(CUBEMAP_BACK,0, -1,-1, 1, 1,0);
+    SET_VERT(CUBEMAP_BACK,2,  1,-1, 1, 0,0);
+    SET_VERT(CUBEMAP_BACK,1, -1, 1, 1, 1,1);
+    SET_VERT(CUBEMAP_BACK,3,  1, 1, 1, 0,1);
+
+    SET_VERT(CUBEMAP_LEFT,0, -1,-1, 1, 0,0);
+    SET_VERT(CUBEMAP_LEFT,1, -1,-1,-1, 1,0);
+    SET_VERT(CUBEMAP_LEFT,2, -1, 1, 1, 0,1);
+    SET_VERT(CUBEMAP_LEFT,3, -1, 1,-1, 1,1);
+
+    SET_VERT(CUBEMAP_RIGHT,0,  1,-1, 1, 1,0);
+    SET_VERT(CUBEMAP_RIGHT,2,  1,-1,-1, 0,0);
+    SET_VERT(CUBEMAP_RIGHT,1,  1, 1, 1, 1,1);
+    SET_VERT(CUBEMAP_RIGHT,3,  1, 1,-1, 0,1);
+
+    SET_VERT(CUBEMAP_BOTTOM,0, -1,-1, 1, 0,1);
+    SET_VERT(CUBEMAP_BOTTOM,1,  1,-1, 1, 0,0);
+    SET_VERT(CUBEMAP_BOTTOM,2, -1,-1,-1, 1,1);
+    SET_VERT(CUBEMAP_BOTTOM,3,  1,-1,-1, 1,0);
+
+    SET_VERT(CUBEMAP_TOP,0, -1, 1, 1, 0,1);
+    SET_VERT(CUBEMAP_TOP,2,  1, 1, 1, 1,1);
+    SET_VERT(CUBEMAP_TOP,1, -1, 1,-1, 0,0);
+    SET_VERT(CUBEMAP_TOP,3,  1, 1,-1, 1,0);
+
+    for (int i=0;i<6;i++)
+    {
+        m.indices[6*i + 0] = i*4 + 0;
+        m.indices[6*i + 1] = i*4 + 1;
+        m.indices[6*i + 2] = i*4 + 3;
+        m.indices[6*i + 3] = i*4 + 0;
+        m.indices[6*i + 4] = i*4 + 3;
+        m.indices[6*i + 5] = i*4 + 2;
+    }
+
+    return m;
+}
+
+Texture_F32 load_tex_gm(const char *filename, float gamma)
 {
     Texture_F32 tex;
-    tex.data = load_image_f32_rgb(filename, &(tex.w), &(tex.h), 2.2f);
+    tex.data = load_image_f32_rgb(filename, &(tex.w), &(tex.h), gamma);
     tex.ch = 3;
+    if (!tex.data)
+        printf("Failed to load texture: %s\n", filename);
     return tex;
+}
+
+Texture_F32 load_tex(const char *filename)
+{
+    return load_tex_gm(filename, 2.2f);
 }
 
 Scene init_scene(int width, int height, const char *filename)
@@ -253,6 +336,14 @@ Scene init_scene(int width, int height, const char *filename)
     s.terrain_area_size = 50;
     s.terrain_tile_size_inv = 0.5f;
     //save_image_f32_png_rgb(s.heightmap.data, "saves/heightmap.png", s.heightmap.w, s.heightmap.h, s.heightmap.ch, 1.0f);
+
+    s.cubemap_mesh = create_cubemap_mesh();
+    s.cubemap_tex[CUBEMAP_FRONT]  = load_tex_gm("resources/textures/skybox/hills_ft.png", 1.0f);
+    s.cubemap_tex[CUBEMAP_BACK]   = load_tex_gm("resources/textures/skybox/hills_bk.png", 1.0f);
+    s.cubemap_tex[CUBEMAP_LEFT]   = load_tex_gm("resources/textures/skybox/hills_rt.png", 1.0f);
+    s.cubemap_tex[CUBEMAP_RIGHT]  = load_tex_gm("resources/textures/skybox/hills_lf.png", 1.0f);
+    s.cubemap_tex[CUBEMAP_BOTTOM] = load_tex_gm("resources/textures/skybox/hills_dn.png", 1.0f);
+    s.cubemap_tex[CUBEMAP_TOP]    = load_tex_gm("resources/textures/skybox/hills_up.jpg", 1.0f);
 
     return s;
 }
@@ -296,6 +387,10 @@ clock_t t2 = clock();
     p.ps = terrain_PS;
     p.vs = terrain_VS;
     SGL_draw_instances(&(s->terrain_mesh), 1, &p);
+
+    p.ps = cubemap_PS;
+    p.vs = cubemap_VS;
+    SGL_draw_instances(&(s->cubemap_mesh), 1, &p);
 
 clock_t t3 = clock();
 

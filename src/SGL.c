@@ -1,6 +1,7 @@
 #include "SGL.h"
 #include "stdlib.h"
 #include "assert.h"
+#include <stdio.h>
 
 Texture_F32 SGL_init_framebuffer(int w, int h, int ch)
 {
@@ -96,16 +97,17 @@ static int clip_near(const VertexOut in[3], VertexOut out[4])
 }
 
 // Perspective divide + viewport transform. Only valid once clip_near has run.
-static Fragment make_fragment(VertexOut v, const Texture_F32 *fb)
+static Fragment make_fragment(VertexOut v, uint32_t w, uint32_t h, uint32_t frag_id)
 {
     const float inv_w = 1.0f / v.clip_pos.w;   // w >= z_near > 0 after near clipping
     Fragment f;
     f.depth      = v.clip_pos.z * inv_w;
     f.inv_w      = inv_w;
-    f.screen_pos = make2(0.5f * (v.clip_pos.x * inv_w + 1.0f) * fb->w,
-                         0.5f * (v.clip_pos.y * inv_w + 1.0f) * fb->h);
+    f.screen_pos = make2(0.5f * (v.clip_pos.x * inv_w + 1.0f) * w,
+                         0.5f * (v.clip_pos.y * inv_w + 1.0f) * h);
     f.tc         = v.tc;
     f.norm       = v.norm;
+    f.frag_id    = frag_id;
     return f;
 }
 
@@ -157,6 +159,7 @@ void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pi
             const float w = 1.0f / dot3(invW, bary);
 
             Fragment f;
+            f.frag_id = pts[0].frag_id;
             f.depth = depth;
             f.inv_w = 1.0f / w;
             f.norm = cmul3(w, add3(add3(cmul3(bary.x, nx), cmul3(bary.y, ny)), cmul3(bary.z, nz)));
@@ -206,9 +209,9 @@ void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
             for (int k = 1; k + 1 < n; k++)
             {
                 const Fragment f[3] = {
-                    make_fragment(poly[0],     &p->fb),
-                    make_fragment(poly[k],     &p->fb),
-                    make_fragment(poly[k + 1], &p->fb),
+                    make_fragment(poly[0],     p->fb.w, p->fb.h, j),
+                    make_fragment(poly[k],     p->fb.w, p->fb.h, j),
+                    make_fragment(poly[k + 1], p->fb.w, p->fb.h, j),
                 };
                 rasterize_triangle(f, &p->fb, p->ps, p->scene_ctx);
             }
