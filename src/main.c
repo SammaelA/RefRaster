@@ -16,6 +16,7 @@
 // 4) Bug fixes + basic terrain: ~3 hours
 // 5) Perlin + terrain normals/textures/movement: ~3 hours
 // 6) Cubemap: ~1 hour
+// 7) Simple mipmaps (depth-based): ~1 hour
 
 void print3x3(mat3 m)
 {
@@ -47,8 +48,8 @@ typedef struct
 
     mesh terrain_mesh;
     Texture_F32 heightmap;
-    Texture_F32 grass;
-    Texture_F32 rocky_grass;
+    Texture_F32Mip grass;
+    Texture_F32Mip rocky_grass;
     float terrain_area_size;
     float terrain_tile_size_inv;
 
@@ -57,13 +58,11 @@ typedef struct
 
     Texture_F32 fb;
     Texture_U8 present_buffer;
+    void *sgl_ctx;
 
     vec3  light_dir;
     float light_intensity;
     float ambient_light_intensity;
-
-    void *sgl_ctx;
-
 } Scene;
 
 VertexOut default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *scene_ctx)
@@ -131,13 +130,33 @@ vec4 terrain_PS(const Fragment *f, const void *scene_ctx)
 
     const vec3 nw = vmul4v(s->viewInvTransposedInv, f->norm);
     const float slope_q = clampf(3.0f*sqrtf(sqrtf(nw.x*nw.x + nw.z*nw.z) / nw.y), 0.0f, 1.0f);
-    const vec3 albedo_grass = slope_q < 0.99f ? sample_f32_rgb(&(s->grass), tc) : make3(0.0f, 1.0f, 0.0f);
-    const vec3 albedo_rocky = slope_q > 0.01f ? sample_f32_rgb(&(s->rocky_grass), tc) : albedo_grass;
+
+    const float ndc = f->depth * 2.0 - 1.0; 
+    const float far = s->cam.z_far;
+    const float near = s->cam.z_near;
+    const float linearDepth = (2.0 * near * far) / (far + near - ndc * (far - near));	
+    const float mip = clampf(log2f(linearDepth), 0.0f, 8.0f);
+
+    const vec3 albedo_grass = slope_q < 0.99f ? sample_f32_rgb_mip(&(s->grass), tc, mip) : make3(0.0f, 1.0f, 0.0f);
+    const vec3 albedo_rocky = slope_q > 0.01f ? sample_f32_rgb_mip(&(s->rocky_grass), tc, mip) : albedo_grass;
     const vec3 albedo = lerp3(slope_q, albedo_grass, albedo_rocky);
     float q = maxf(0.0f, dot3(f->norm, s->light_dir))*s->light_intensity + s->ambient_light_intensity;
     const vec3 col = cmul3(q, albedo);
 
     return to_vec4(col, 1.0f);
+}
+
+vec4 terrain_vis_mip_PS(const Fragment *f, const void *scene_ctx)   
+{
+    const Scene *s = (const Scene *)scene_ctx;
+    const float ndc = f->depth * 2.0 - 1.0; 
+    const float far = s->cam.z_far;
+    const float near = s->cam.z_near;
+    const float linearDepth = (2.0 * near * far) / (far + near - ndc * (far - near));	
+    const float mip = clampf(log2f(linearDepth), 0.0f, 8.0f);
+    const float c = 0.125f*roundf(mip);
+
+    return make4(c, c, c, 1.0f);
 }
 
 vec4 lambert_PS(const Fragment *f, const void *scene_ctx)
@@ -330,8 +349,11 @@ Scene init_scene(int width, int height, const char *filename)
     s.fb = SGL_init_framebuffer(width, height, 4);
     s.sgl_ctx = SGL_init_internal_ctx();
 
-    s.grass = load_tex("resources/textures/Grass_09-256x256.png");
-    s.rocky_grass = load_tex("resources/textures/Grass_11-256x256.png");
+    Texture_F32 grass = load_tex("resources/textures/Grass_09-256x256.png");
+    Texture_F32 rocky_grass = load_tex("resources/textures/Grass_11-256x256.png");
+
+    s.grass = SGL_create_mipmaps(&grass); SGL_free_texture_f32(&grass);
+    s.rocky_grass = SGL_create_mipmaps(&rocky_grass); SGL_free_texture_f32(&rocky_grass);
     s.heightmap = create_heightmap(1024, 5.0f);
     s.terrain_mesh = create_terrain_mesh(100, 10.0f);
     s.terrain_area_size = 50;
@@ -352,13 +374,20 @@ Scene init_scene(int width, int height, const char *filename)
 void free_scene(Scene *s)
 {
     free_mesh(&s->m);
-    free(s->tex.data);
-    SGL_free_framebuffer(&s->fb);
-    free(s->present_buffer.data);
-    SGL_free_internal_ctx(s->sgl_ctx);
+    SGL_free_texture_f32(&s->tex);
 
-    free(s->heightmap.data);
     free_mesh(&s->terrain_mesh);
+    SGL_free_texture_f32(&s->heightmap);
+    SGL_free_texture_f32_mip(&s->grass);
+    SGL_free_texture_f32_mip(&s->rocky_grass);
+
+    free_mesh(&s->cubemap_mesh);
+    for (int i=0;i<6;i++)
+        SGL_free_texture_f32(&s->cubemap_tex[i]);
+
+    SGL_free_framebuffer(&s->fb);
+    SGL_free_texture_u8(&s->present_buffer);
+    SGL_free_internal_ctx(s->sgl_ctx);
 }
 
 void render_scene(Scene *s)
@@ -508,6 +537,7 @@ int main(int argc, char **argv)
     int height = argc > 3 ? atoi(argv[3]) : 480;
     int fb_width = argc > 4 ? atoi(argv[4]) : 640;
     int fb_height = argc > 5 ? atoi(argv[5]) : 480;
+
     Scene scene = init_scene(fb_width, fb_height, filename);
     scene.present_buffer.data = malloc(4 * width * height);
     scene.present_buffer.w = width;

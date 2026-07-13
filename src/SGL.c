@@ -2,6 +2,7 @@
 #include "stdlib.h"
 #include "assert.h"
 #include <stdio.h>
+#include <string.h>
 
 Texture_F32 SGL_init_framebuffer(int w, int h, int ch)
 {
@@ -195,7 +196,6 @@ void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
             i_ctx->all_pts[i*m->num_vertices + j] = p->vs(i, j, m, p->scene_ctx);
     }
 
-    //printf("\n");
     for (int i = 0; i < instance_count; i++)
     {
         for (int j = 0; j < m->num_triangles; j++)
@@ -269,25 +269,115 @@ void SGL_resolve_simple(const Texture_F32 fb, Texture_U8 out)
     }
 }
 
-vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc)
+Texture_F32Mip SGL_create_mipmaps(const Texture_F32 *tex)
 {
-    const vec2 tc_t = make2(clampf(tc.x, 0.0f, 1-1e-6f)*tex->w, clampf(tc.y, 0.0f, 1-1e-6f)*tex->h);
+    Texture_F32Mip mip_tex;
+
+    mip_tex.data[0] = malloc(tex->w * tex->h * tex->ch * sizeof(float));
+    memcpy(mip_tex.data[0], tex->data, tex->w * tex->h * tex->ch * sizeof(float));
+    mip_tex.ws[0] = tex->w;
+    mip_tex.hs[0] = tex->h;
+    mip_tex.ch = tex->ch;
+    mip_tex.mips = 1;
+
+    while (mip_tex.ws[mip_tex.mips - 1] > 1 || mip_tex.hs[mip_tex.mips - 1] > 1)
+    {
+        int prev_w = mip_tex.ws[mip_tex.mips - 1];
+        int prev_h = mip_tex.hs[mip_tex.mips - 1];
+        int new_w = maxf(1, prev_w / 2);
+        int new_h = maxf(1, prev_h / 2);
+
+        mip_tex.data[mip_tex.mips] = malloc(new_w * new_h * tex->ch * sizeof(float));
+        mip_tex.ws[mip_tex.mips] = new_w;
+        mip_tex.hs[mip_tex.mips] = new_h;
+
+        for (int j = 0; j < new_h; j++)
+        {
+            for (int i = 0; i < new_w; i++)
+            {
+                for (int ch = 0; ch < tex->ch; ch++)
+                {
+                    float sum = 0.0f;
+                    int count = 0;
+                    for (int y = 0; y < 2; y++)
+                    {
+                        for (int x = 0; x < 2; x++)
+                        {
+                            int src_x = mini(prev_w - 1, i * 2 + x);
+                            int src_y = mini(prev_h - 1, j * 2 + y);
+                            sum += mip_tex.data[mip_tex.mips - 1][tex->ch*(src_y * prev_w + src_x) + ch];
+                            count++;
+                        }
+                    }
+                    mip_tex.data[mip_tex.mips][tex->ch*(j * new_w + i) + ch] = sum / count;
+                }
+            }
+        }
+
+        mip_tex.mips++;
+    }
+
+    return mip_tex;
+}
+
+void SGL_free_texture_f32(Texture_F32 *tex)
+{
+    free(tex->data);
+    tex->data = NULL;
+}
+
+void SGL_free_texture_u8(Texture_U8 *tex)
+{
+    free(tex->data);
+    tex->data = NULL;
+}
+
+void SGL_free_texture_f32_mip(Texture_F32Mip *tex)
+{
+    for (int i=0;i<tex->mips;i++)
+    {
+        free(tex->data[i]);
+        tex->data[i] = NULL;
+    }
+    tex->mips = 0;
+}
+
+
+inline static vec3 sample_f32_rgb_raw(const float *data, int w, int h, int n_ch, vec2 tc)
+{
+    const vec2 tc_t = make2(clampf(tc.x, 0.0f, 1-1e-6f)*w, clampf(tc.y, 0.0f, 1-1e-6f)*h);
     const vec2 tc_i = make2((int)tc_t.x, (int)tc_t.y);
     const vec2 dtc  = sub2(tc_t, tc_i);
 
     vec3 res = make_zero3();
     const int i = tc_i.x;
     const int j = tc_i.y;
-    const int di = (i == tex->w-1) ? 0 : 1;
-    const int dj = (j == tex->h-1) ? 0 : 1;
-    for (int ch=0; ch<mini(3, tex->ch); ch++)
+    const int di = (i == w-1) ? 0 : 1;
+    const int dj = (j == h-1) ? 0 : 1;
+    for (int ch=0; ch<mini(3, n_ch); ch++)
     {
-        res.M[ch] = (1-dtc.x)*(1-dtc.y)*tex->data[tex->ch*(tex->w*(j+0) + (i+0))+ch] +
-                      (dtc.x)*(1-dtc.y)*tex->data[tex->ch*(tex->w*(j+0) + (i+di))+ch] + 
-                    (1-dtc.x)*  (dtc.y)*tex->data[tex->ch*(tex->w*(j+dj) + (i+0))+ch] + 
-                      (dtc.x)*  (dtc.y)*tex->data[tex->ch*(tex->w*(j+dj) + (i+di))+ch];
+        res.M[ch] = (1-dtc.x)*(1-dtc.y)*data[n_ch*(w*(j+0) + (i+0))+ch] +
+                      (dtc.x)*(1-dtc.y)*data[n_ch*(w*(j+0) + (i+di))+ch] + 
+                    (1-dtc.x)*  (dtc.y)*data[n_ch*(w*(j+dj) + (i+0))+ch] + 
+                      (dtc.x)*  (dtc.y)*data[n_ch*(w*(j+dj) + (i+di))+ch];
     }   
     return res;
+}
+
+vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc)
+{
+    return sample_f32_rgb_raw(tex->data, tex->w, tex->h, tex->ch, tc);
+}
+
+vec3 sample_f32_rgb_mip(const Texture_F32Mip *tex, vec2 tc, float mip)
+{
+    mip = clampf(mip, 0.0f, tex->mips-1);
+    int mip0 = (int)floorf(mip);
+    int mip1 = mini(mip0 + 1, tex->mips-1);
+    float dmip = mip - mip0;
+    vec3 c0 = sample_f32_rgb_raw(tex->data[mip0], tex->ws[mip0], tex->hs[mip0], tex->ch, tc);
+    vec3 c1 = (mip1 != mip0 && dmip > 1e-4f) ? sample_f32_rgb_raw(tex->data[mip1], tex->ws[mip1], tex->hs[mip1], tex->ch, tc) : c0;
+    return lerp3(dmip, c0, c1);
 }
 
 vec4 gather_f32(const Texture_F32 *tex, vec2 tc, int ch, vec2 *out_dtc)

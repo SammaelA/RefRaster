@@ -10,6 +10,8 @@
 #define CHANNEL_B 2
 #define CHANNEL_DEPTH 3
 
+#define MAX_MIPS 10
+
 typedef struct
 {
   vec3 pos;
@@ -48,6 +50,15 @@ typedef struct
 
 typedef struct 
 {
+    float *data[MAX_MIPS];
+    int ws[MAX_MIPS];
+    int hs[MAX_MIPS];
+    int ch;
+    int mips;
+} Texture_F32Mip;
+
+typedef struct 
+{
     unsigned char *data;
     int w;
     int h;
@@ -77,7 +88,13 @@ void* SGL_init_internal_ctx();
 void SGL_free_internal_ctx(SGL_InternalCtx *i_ctx);
 
 vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc);
+vec3 sample_f32_rgb_mip(const Texture_F32Mip *tex, vec2 tc, float mip);
 vec4 gather_f32(const Texture_F32 *tex, vec2 tc, int channel, vec2 *out_dtc);
+
+Texture_F32Mip SGL_create_mipmaps(const Texture_F32 *tex);
+void SGL_free_texture_f32(Texture_F32 *tex);
+void SGL_free_texture_u8(Texture_U8 *tex);
+void SGL_free_texture_f32_mip(Texture_F32Mip *tex);
 
 Texture_F32 SGL_init_framebuffer(int w, int h, int ch);
 void SGL_free_framebuffer(Texture_F32 *fb);
