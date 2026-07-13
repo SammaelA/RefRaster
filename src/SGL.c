@@ -46,12 +46,12 @@ static inline float signed_area(vec2 a, vec2 b, vec2 c)
 {
     return (c.x - a.x) * (b.y - a.y) + (c.y - a.y) * (a.x - b.x);
 }
-static inline int in_triangle(vec2 p, vec2 a, vec2 b, vec2 c, vec3 *bary)
+static inline int in_triangle(vec2 p, vec2 a, vec2 b, vec2 c, float a_thr, vec3 *bary)
 {
     const float areaABP = signed_area(a, b, p);
     const float areaBCP = signed_area(b, c, p);
     const float areaCAP = signed_area(c, a, p);
-    int inTri = (areaABP <= 0 && areaBCP <= 0 && areaCAP <= 0);
+    int inTri = (areaABP <= a_thr && areaBCP <= a_thr && areaCAP <= a_thr);
     if (inTri)
     {
         const float totalArea = (areaABP + areaBCP + areaCAP);
@@ -127,10 +127,10 @@ void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pi
     float maxfX = maxf(maxf(a.x, b.x), c.x);
     float maxfY = maxf(maxf(a.y, b.y), c.y);
     // Pixel block covering the triangle bounds
-    int blockStartX = clampf((int)(minfX), 0, fb->w - 1);
-    int blockStartY = clampf((int)(minfY), 0, fb->h - 1);
-    int blockEndX = clampf(ceil(maxfX), 0, fb->w - 1);
-    int blockEndY = clampf(ceil(maxfY), 0, fb->h - 1);
+    int blockStartX = clampf(floorf(minfX), 0, fb->w);
+    int blockStartY = clampf(floorf(minfY), 0, fb->h);
+    int blockEndX = clampf(ceilf(maxfX), -1, fb->w - 1);
+    int blockEndY = clampf(ceilf(maxfY), -1, fb->h - 1);
 
     // Perspective-correct interpolation weights: 1 / clip-space w, linear in screen space.
     vec3 invW = make3(pts[0].inv_w, pts[1].inv_w, pts[2].inv_w);
@@ -141,6 +141,8 @@ void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pi
     vec3 ny = cmul3(invW.M[1], pts[1].norm);
     vec3 nz = cmul3(invW.M[2], pts[2].norm);
 
+    const float a_thr = 1e-6f*absf(signed_area(a, b, c));
+
     // Loop over the block of pixels covering the triangle bounds
     for (int y = blockStartY; y <= blockEndY; y++)
     {
@@ -148,7 +150,8 @@ void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pi
         {
             vec2 p = make2(x, y);
             vec3 bary;
-            if (!in_triangle(p, a, b, c, &bary))
+            int in_tri = in_triangle(p, a, b, c, a_thr, &bary);
+            if (!in_tri)
                 continue;
 
             float depth = bary.x * pts[0].depth + bary.y * pts[1].depth + bary.z * pts[2].depth;
@@ -192,6 +195,7 @@ void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
             i_ctx->all_pts[i*m->num_vertices + j] = p->vs(i, j, m, p->scene_ctx);
     }
 
+    //printf("\n");
     for (int i = 0; i < instance_count; i++)
     {
         for (int j = 0; j < m->num_triangles; j++)
