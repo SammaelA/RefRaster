@@ -112,8 +112,10 @@ static Fragment make_fragment(VertexOut v, uint32_t w, uint32_t h, uint32_t frag
     return f;
 }
 
-void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pixel_shader, const void *scene)
+inline static void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pixel_shader, const void *scene)
 {
+    const uint32_t depth_only = (fb->ch < 4) || (pixel_shader == NULL);
+    const uint32_t depth_ch_off = depth_only ? 0 : CHANNEL_DEPTH;
     const vec2 a = pts[0].screen_pos;
     const vec2 b = pts[1].screen_pos;
     const vec2 c = pts[2].screen_pos;
@@ -156,7 +158,7 @@ void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pi
                 continue;
 
             float depth = bary.x * pts[0].depth + bary.y * pts[1].depth + bary.z * pts[2].depth;
-            float buffer_depth = fb->data[(y * fb->w + x) * fb->ch + CHANNEL_DEPTH];
+            float buffer_depth = fb->data[(y * fb->w + x) * fb->ch + depth_ch_off];
             if (depth >= buffer_depth)
                 continue;
 
@@ -170,12 +172,15 @@ void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pi
             f.tc = cmul2(w, add2(add2(cmul2(bary.x, tx), cmul2(bary.y, ty)), cmul2(bary.z, tz)));
             f.screen_pos = p;
 
-            vec4 res_color = pixel_shader(&f, scene);
+            if (depth_only == 0)
+            {
+                vec4 res_color = pixel_shader(&f, scene);
+                fb->data[(y * fb->w + x) * fb->ch + CHANNEL_R] = res_color.x;
+                fb->data[(y * fb->w + x) * fb->ch + CHANNEL_G] = res_color.y;
+                fb->data[(y * fb->w + x) * fb->ch + CHANNEL_B] = res_color.z;
+            }
 
-            fb->data[(y * fb->w + x) * fb->ch + CHANNEL_R] = res_color.x;
-            fb->data[(y * fb->w + x) * fb->ch + CHANNEL_G] = res_color.y;
-            fb->data[(y * fb->w + x) * fb->ch + CHANNEL_B] = res_color.z;
-            fb->data[(y * fb->w + x) * fb->ch + CHANNEL_DEPTH] = depth;
+            fb->data[(y * fb->w + x) * fb->ch + depth_ch_off] = depth;
         }
     }
 }
