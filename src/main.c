@@ -18,6 +18,14 @@
 // 6) Cubemap: ~1 hour
 // 7) Simple mipmaps (depth-based): ~1 hour
 // 8) Proper instancing and scene management: ~3 hours
+// TODO
+// 9) Shadow mapping
+//10) Faster rasterization techniques
+//11) Multithreading
+//12) Frustum culling
+//13) Point lights
+//14) SSAO
+//15) Anti-aliasing
 
 void print3x3(mat3 m)
 {
