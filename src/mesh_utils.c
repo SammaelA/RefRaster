@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <stdint.h>
 #endif
 
 void free_mesh(mesh *m)
@@ -154,6 +155,42 @@ mesh load_obj(const char *filename)
     {
         for (int i = 0; i < attrib.num_vertices; i++)
             m.normals[i] = make3(1.0f, 0.0f, 0.0f);
+		
+		//recalculating normals
+		vec3 *norm_sum = malloc(attrib.num_vertices * sizeof(vec3));
+		uint32_t *norm_count = malloc(attrib.num_vertices * sizeof(uint32_t));
+		for (int i = 0; i < attrib.num_vertices; i++)
+		{
+			norm_sum[i] = make3(0.0f, 0.0f, 0.0f);
+			norm_count[i] = 0;	
+		}
+
+		for (int i = 0; i < attrib.num_faces; i+=3)
+		{
+			const int idx_A = attrib.faces[i+0].v_idx;
+			const int idx_B = attrib.faces[i+1].v_idx;
+			const int idx_C = attrib.faces[i+2].v_idx;
+			const vec3 A = m.verts[idx_A];
+			const vec3 B = m.verts[idx_B];
+			const vec3 C = m.verts[idx_C];
+			const vec3 norm = norm3(cross3(sub3(B, A), sub3(C, A)));
+
+			norm_sum[idx_A] = add3(norm_sum[idx_A], norm);
+			norm_sum[idx_B] = add3(norm_sum[idx_B], norm);
+			norm_sum[idx_C] = add3(norm_sum[idx_C], norm);
+
+			norm_count[idx_A]++;
+			norm_count[idx_B]++;
+			norm_count[idx_C]++;
+		}
+
+		for (int i = 0; i < attrib.num_vertices; i++)
+		{
+			if (norm_count[i] > 0)
+				m.normals[i] = norm3(norm_sum[i]);
+			else
+				m.normals[i] = make3(1.0f, 0.0f, 0.0f);
+		}
     }
     if (attrib.num_texcoords == attrib.num_vertices)
     {
