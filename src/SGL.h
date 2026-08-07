@@ -65,8 +65,16 @@ typedef struct
     int ch;
 } Texture_U8;
 
-typedef vec4 (*SGL_PixelShader)(const Fragment *f, const void *scene_ctx);
-typedef VertexOut (*SGL_VertexShader)(uint32_t instance_id, uint32_t vertex_id, const mesh *m, const void *scene_ctx);
+typedef struct
+{
+    vec3 cam_pos;
+    mat4 view, proj, viewProj;
+    mat4 viewInvTransposed, viewInvTransposedInv;
+    const void *scene_ctx;
+} SGL_Uniforms;
+
+typedef vec4 (*SGL_PixelShader)(const Fragment *f, const SGL_Uniforms *uniforms);
+typedef VertexOut (*SGL_VertexShader)(uint32_t instance_id, uint32_t vertex_id, const mesh *m, const SGL_Uniforms *scene_ctx);
 
 typedef struct
 {
@@ -80,7 +88,7 @@ typedef struct
     Texture_F32 fb;
     SGL_PixelShader ps;
     SGL_VertexShader vs;
-    void *internal_ctx;
+    SGL_InternalCtx *internal_ctx;
     void *scene_ctx;
 } SGL_Pipeline;
 

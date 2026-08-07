@@ -40,9 +40,6 @@ void save_framebuffer_to_image_RGB(const Texture_F32 *fb, const char *filename)
 typedef struct
 {
     SGL_Camera cam;
-    mat4 view, proj, viewProj;
-    mat4 viewInvTransposed, viewInvTransposedInv;
-
     mesh m;
     Texture_F32 tex;
 
@@ -65,40 +62,36 @@ typedef struct
     float ambient_light_intensity;
 } Scene;
 
-VertexOut default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *scene_ctx)
+VertexOut default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_Uniforms *u)
 {
-    const Scene *s = (const Scene *)scene_ctx;
-
     VertexOut v;
-    v.clip_pos = vmul4(s->viewProj, to_vec4(m->verts[v_id], 1.0f));
+    v.clip_pos = vmul4(u->viewProj, to_vec4(m->verts[v_id], 1.0f));
     v.tc = m->tcs[v_id];
-    v.norm = norm3(vmul4v(s->viewInvTransposed, m->normals[v_id]));
+    v.norm = norm3(vmul4v(u->viewInvTransposed, m->normals[v_id]));
     return v;
 }
 
-VertexOut cubemap_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *scene_ctx)
+VertexOut cubemap_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_Uniforms *u)
 {
-    const Scene *s = (const Scene *)scene_ctx;
-
     VertexOut v;
-    v.clip_pos = vmul4(s->viewProj, to_vec4(add3(cmul3(100.0f, m->verts[v_id]), s->cam.pos), 1.0f));
+    v.clip_pos = vmul4(u->viewProj, to_vec4(add3(cmul3(100.0f, m->verts[v_id]), u->cam_pos), 1.0f));
     v.tc = m->tcs[v_id];
-    v.norm = norm3(vmul4v(s->viewInvTransposed, m->normals[v_id]));
+    v.norm = norm3(vmul4v(u->viewInvTransposed, m->normals[v_id]));
     return v;
 }
 
-vec4 cubemap_PS(const Fragment *f, const void *scene_ctx)
+vec4 cubemap_PS(const Fragment *f, const SGL_Uniforms *u)
 {
-    const Scene *s = (const Scene *)scene_ctx;
+    const Scene *s = (const Scene *)u->scene_ctx;
     const vec3 col = sample_f32_rgb(&(s->cubemap_tex[f->frag_id/2]), f->tc);
     return to_vec4(col, 1.0f);
 }
 
-VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void *scene_ctx)
+VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_Uniforms *u)
 {
-    const Scene *s = (const Scene *)scene_ctx;
+    const Scene *s = (const Scene *)u->scene_ctx;
 
-    vec3 v_pos = add3(m->verts[v_id], make3(floorf(s->cam.pos.x), 0, floorf(s->cam.pos.z)));
+    vec3 v_pos = add3(m->verts[v_id], make3(floorf(u->cam_pos.x), 0, floorf(u->cam_pos.z)));
     const float t_sz = s->terrain_area_size;
     const vec2 v_tc = make2(0.5f*(v_pos.x+t_sz)/t_sz, 0.5f*(v_pos.z+t_sz)/t_sz);
 
@@ -115,20 +108,20 @@ VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const void 
     const vec3 v_norm = norm3(make3(-dh_dx, 1.0f, -dh_dy));
 
     VertexOut v;
-    v.clip_pos = vmul4(s->viewProj, to_vec4(v_pos, 1.0f));
+    v.clip_pos = vmul4(u->viewProj, to_vec4(v_pos, 1.0f));
     v.tc = make2(v_pos.x, v_pos.z);
-    v.norm = norm3(vmul4v(s->viewInvTransposed, v_norm));
+    v.norm = norm3(vmul4v(u->viewInvTransposed, v_norm));
     return v;
 }
 
-vec4 terrain_PS(const Fragment *f, const void *scene_ctx)   
+vec4 terrain_PS(const Fragment *f, const SGL_Uniforms *u)   
 {
-    const Scene *s = (const Scene *)scene_ctx;
+    const Scene *s = (const Scene *)u->scene_ctx;
 
     const vec2 tc = make2(2.0f*absf(fractf(s->terrain_tile_size_inv*f->tc.x)-0.5f), 
                           2.0f*absf(fractf(s->terrain_tile_size_inv*f->tc.y)-0.5f));
 
-    const vec3 nw = vmul4v(s->viewInvTransposedInv, f->norm);
+    const vec3 nw = vmul4v(u->viewInvTransposedInv, f->norm);
     const float slope_q = clampf(3.0f*sqrtf(sqrtf(nw.x*nw.x + nw.z*nw.z) / nw.y), 0.0f, 1.0f);
 
     const float ndc = f->depth * 2.0 - 1.0; 
@@ -146,9 +139,9 @@ vec4 terrain_PS(const Fragment *f, const void *scene_ctx)
     return to_vec4(col, 1.0f);
 }
 
-vec4 terrain_vis_mip_PS(const Fragment *f, const void *scene_ctx)   
+vec4 terrain_vis_mip_PS(const Fragment *f, const SGL_Uniforms *u)   
 {
-    const Scene *s = (const Scene *)scene_ctx;
+    const Scene *s = (const Scene *)u->scene_ctx;
     const float ndc = f->depth * 2.0 - 1.0; 
     const float far = s->cam.z_far;
     const float near = s->cam.z_near;
@@ -159,9 +152,9 @@ vec4 terrain_vis_mip_PS(const Fragment *f, const void *scene_ctx)
     return make4(c, c, c, 1.0f);
 }
 
-vec4 lambert_PS(const Fragment *f, const void *scene_ctx)
+vec4 lambert_PS(const Fragment *f, const SGL_Uniforms *u)
 {
-    const Scene *s = (const Scene *)scene_ctx;
+    const Scene *s = (const Scene *)u->scene_ctx;
 
     const vec3 albedo = sample_f32_rgb(&(s->tex), f->tc);
     float q = maxf(0.0f, dot3(f->norm, s->light_dir))*s->light_intensity + s->ambient_light_intensity;
@@ -170,16 +163,15 @@ vec4 lambert_PS(const Fragment *f, const void *scene_ctx)
     return to_vec4(col, 1.0f);
 }
 
-vec4 vis_normal_PS(const Fragment *f, const void *scene_ctx)
+vec4 vis_normal_PS(const Fragment *f, const SGL_Uniforms *u)
 {
-    const Scene *s = (const Scene *)scene_ctx;
-    const vec3 n_world = vmul4v(s->viewInvTransposedInv, f->norm);
+    const vec3 n_world = vmul4v(u->viewInvTransposedInv, f->norm);
     return to_vec4(add3(make3(0.25f, 0.25f, 0.25f), cmul3(0.5f, pow3(abs3(n_world), 1.0f/1.5f))), 1.0f);
 }
 
-vec4 lambert_no_tex_PS(const Fragment *f, const void *scene_ctx)
+vec4 lambert_no_tex_PS(const Fragment *f, const SGL_Uniforms *u)
 {
-    const Scene *s = (const Scene *)scene_ctx;
+    const Scene *s = (const Scene *)u->scene_ctx;
 
     const vec3 albedo = make3(0.5, 0.5, 0.5);
     float q = maxf(0.0f, dot3(f->norm, s->light_dir))*s->light_intensity + s->ambient_light_intensity;
@@ -188,7 +180,7 @@ vec4 lambert_no_tex_PS(const Fragment *f, const void *scene_ctx)
     return to_vec4(col, 1.0f);
 }
 
-vec4 vis_tc_PS(const Fragment *f, const void *scene_ctx)
+vec4 vis_tc_PS(const Fragment *f, const SGL_Uniforms *u)
 {
     return make4(f->tc.x, f->tc.y, 0.0f, 1.0f);
 }
@@ -393,12 +385,6 @@ void free_scene(Scene *s)
 void render_scene(Scene *s)
 {
 clock_t t1 = clock();
-
-    s->view = look_at(s->cam.pos, s->cam.lookAt, s->cam.up);
-    s->proj = perspective(s->cam.fovy, s->cam.aspect, s->cam.z_near, s->cam.z_far);
-    s->viewProj = mul4x4(s->proj, s->view);
-    s->viewInvTransposed = transpose4(inverse4x4(s->view));
-    s->viewInvTransposedInv = inverse4x4(s->viewInvTransposed);
 
     SGL_clear_framebuffer(&s->fb, 0.0f);
 

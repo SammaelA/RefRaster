@@ -112,7 +112,7 @@ static Fragment make_fragment(VertexOut v, uint32_t w, uint32_t h, uint32_t frag
     return f;
 }
 
-inline static void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pixel_shader, const void *scene)
+inline static void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_PixelShader pixel_shader, const SGL_Uniforms *uniforms)
 {
     const uint32_t depth_only = (fb->ch < 4) || (pixel_shader == NULL);
     const uint32_t depth_ch_off = depth_only ? 0 : CHANNEL_DEPTH;
@@ -174,7 +174,7 @@ inline static void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_
 
             if (depth_only == 0)
             {
-                vec4 res_color = pixel_shader(&f, scene);
+                vec4 res_color = pixel_shader(&f, uniforms);
                 fb->data[(y * fb->w + x) * fb->ch + CHANNEL_R] = res_color.x;
                 fb->data[(y * fb->w + x) * fb->ch + CHANNEL_G] = res_color.y;
                 fb->data[(y * fb->w + x) * fb->ch + CHANNEL_B] = res_color.z;
@@ -187,8 +187,17 @@ inline static void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_
 
 void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
 {
+    SGL_Uniforms uniforms;
+    uniforms.cam_pos = p->cam.pos;
+    uniforms.view = look_at(p->cam.pos, p->cam.lookAt, p->cam.up);
+    uniforms.proj = perspective(p->cam.fovy, p->cam.aspect, p->cam.z_near, p->cam.z_far);
+    uniforms.viewProj = mul4x4(uniforms.proj, uniforms.view);
+    uniforms.viewInvTransposed = transpose4(inverse4x4(uniforms.view));
+    uniforms.viewInvTransposedInv = inverse4x4(uniforms.viewInvTransposed);
+    uniforms.scene_ctx = p->scene_ctx;
+
     const uint32_t total_vertices = instance_count * m->num_vertices;
-    SGL_InternalCtx *i_ctx = (SGL_InternalCtx*)p->internal_ctx;
+    SGL_InternalCtx *i_ctx = p->internal_ctx;
     if (i_ctx->all_pts_size < total_vertices)
     {
         i_ctx->all_pts_size = total_vertices;
@@ -198,7 +207,7 @@ void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
     for (int i = 0; i < instance_count; i++)
     {
         for (int j = 0; j < m->num_vertices; j++)
-            i_ctx->all_pts[i*m->num_vertices + j] = p->vs(i, j, m, p->scene_ctx);
+            i_ctx->all_pts[i*m->num_vertices + j] = p->vs(i, j, m, &uniforms);
     }
 
     for (int i = 0; i < instance_count; i++)
@@ -222,7 +231,7 @@ void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
                     make_fragment(poly[k],     p->fb.w, p->fb.h, j),
                     make_fragment(poly[k + 1], p->fb.w, p->fb.h, j),
                 };
-                rasterize_triangle(f, &p->fb, p->ps, p->scene_ctx);
+                rasterize_triangle(f, &p->fb, p->ps, &uniforms);
             }
         }
     }
