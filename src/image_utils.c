@@ -107,5 +107,7 @@ float *load_image_f32_rgb(const char *filename, int *w, int *h, float gamma)
     for (int i=0; i<sz; i++)
         data_f32[i] = powf(raw_data[i]/255.0f, gamma);
 
+    STBI_FREE(raw_data);
+
     return data_f32;
 }

@@ -492,13 +492,22 @@ static inline mat4 make4x4(mat3 m, vec3 v)
     res.cols[3] = to_vec4(v, 1);
     return res;
 }
-static inline mat4 translate(vec3 v)
+static inline mat4 translate4x4(vec3 v)
 {
     mat4 m;
     m.cols[0] = make4(1.0f, 0.0f, 0.0f, 0.0f);
     m.cols[1] = make4(0.0f, 1.0f, 0.0f, 0.0f);
     m.cols[2] = make4(0.0f, 0.0f, 1.0f, 0.0f);
     m.cols[3] = make4(v.x, v.y, v.z, 1.0f);
+    return m;
+}
+static inline mat4 scale4x4(float s)
+{
+    mat4 m;
+    m.cols[0] = make4(   s, 0.0f, 0.0f, 0.0f);
+    m.cols[1] = make4(0.0f,    s, 0.0f, 0.0f);
+    m.cols[2] = make4(0.0f, 0.0f,    s, 0.0f);
+    m.cols[3] = make4(0.0f, 0.0f, 0.0f, 1.0f);
     return m;
 }
 static inline mat4 mul4x4(mat4 a, mat4 b)

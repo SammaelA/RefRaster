@@ -185,15 +185,16 @@ inline static void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_
     }
 }
 
-void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
+void SGL_draw_instances(SGL_Pipeline *p, const mesh *m, const mat4 *instances, uint32_t instance_count)
 {
     SGL_Uniforms uniforms;
     uniforms.cam_pos = p->cam.pos;
     uniforms.view = look_at(p->cam.pos, p->cam.lookAt, p->cam.up);
     uniforms.proj = perspective(p->cam.fovy, p->cam.aspect, p->cam.z_near, p->cam.z_far);
-    uniforms.viewProj = mul4x4(uniforms.proj, uniforms.view);
-    uniforms.viewInvTransposed = transpose4(inverse4x4(uniforms.view));
-    uniforms.viewInvTransposedInv = inverse4x4(uniforms.viewInvTransposed);
+    uniforms.normalToWorld = inverse4x4(transpose4(inverse4x4(uniforms.view)));
+    // uniforms.viewProj = mul4x4(uniforms.proj, uniforms.view);
+    // uniforms.viewInvTransposed = transpose4(inverse4x4(uniforms.view));
+    // uniforms.normalToWorld = inverse4x4(transpose4(inverse4x4(uniforms.view)));
     uniforms.scene_ctx = p->scene_ctx;
 
     const uint32_t total_vertices = instance_count * m->num_vertices;
@@ -206,12 +207,14 @@ void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
 
     for (int i = 0; i < instance_count; i++)
     {
+        const mat4 MV = mul4x4(uniforms.view, instances[i]);
+        uniforms.model = instances[i];
+        uniforms.MVP = mul4x4(uniforms.proj, MV);
+        uniforms.MVInvTransposed = transpose4(inverse4x4(MV));
+
         for (int j = 0; j < m->num_vertices; j++)
             i_ctx->all_pts[i*m->num_vertices + j] = p->vs(i, j, m, &uniforms);
-    }
 
-    for (int i = 0; i < instance_count; i++)
-    {
         for (int j = 0; j < m->num_triangles; j++)
         {
             const VertexOut tri[3] = {
@@ -235,6 +238,12 @@ void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p)
             }
         }
     }
+}
+
+void SGL_draw_model(SGL_Pipeline *p, const mesh *m)
+{
+    mat4 ident = make_ident4x4();
+    SGL_draw_instances(p, m, &ident, 1);
 }
 
 void SGL_resolve_simple(const Texture_F32 fb, Texture_U8 out)

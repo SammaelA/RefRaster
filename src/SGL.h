@@ -68,8 +68,9 @@ typedef struct
 typedef struct
 {
     vec3 cam_pos;
-    mat4 view, proj, viewProj;
-    mat4 viewInvTransposed, viewInvTransposedInv;
+    mat4 model, view, proj;
+    mat4 MVP, MVInvTransposed;
+    mat4 normalToWorld;
     const void *scene_ctx;
 } SGL_Uniforms;
 
@@ -108,7 +109,8 @@ Texture_F32 SGL_init_framebuffer(int w, int h, int ch);
 void SGL_free_framebuffer(Texture_F32 *fb);
 void SGL_clear_framebuffer(Texture_F32 *fb, float value);
 
-void SGL_draw_instances(const mesh *m, uint32_t instance_count, SGL_Pipeline *p);
+void SGL_draw_model(SGL_Pipeline *p, const mesh *m);
+void SGL_draw_instances(SGL_Pipeline *p, const mesh *m, const mat4 *instances, uint32_t instance_count);
 void SGL_resolve_simple(const Texture_F32 fb, Texture_U8 present_buffer);
 
 #endif

@@ -191,6 +191,9 @@ mesh load_obj(const char *filename)
 			else
 				m.normals[i] = make3(1.0f, 0.0f, 0.0f);
 		}
+
+		free(norm_sum);
+		free(norm_count);
     }
     if (attrib.num_texcoords == attrib.num_vertices)
     {

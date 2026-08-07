@@ -17,6 +17,7 @@
 // 5) Perlin + terrain normals/textures/movement: ~3 hours
 // 6) Cubemap: ~1 hour
 // 7) Simple mipmaps (depth-based): ~1 hour
+// 8) Proper instancing and scene management: ~3 hours
 
 void print3x3(mat3 m)
 {
@@ -39,9 +40,19 @@ void save_framebuffer_to_image_RGB(const Texture_F32 *fb, const char *filename)
 
 typedef struct
 {
-    SGL_Camera cam;
     mesh m;
-    Texture_F32 tex;
+    Texture_F32 tex_albedo;
+    uint32_t n_instances;
+    mat4 *instances;
+} StaticModel;
+
+typedef struct
+{
+    SGL_Camera cam;
+
+    uint32_t active_model_id;
+    uint32_t n_static_models;
+    StaticModel *static_models;
 
     mesh terrain_mesh;
     Texture_F32 heightmap;
@@ -65,18 +76,18 @@ typedef struct
 VertexOut default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_Uniforms *u)
 {
     VertexOut v;
-    v.clip_pos = vmul4(u->viewProj, to_vec4(m->verts[v_id], 1.0f));
+    v.clip_pos = vmul4(u->MVP, to_vec4(m->verts[v_id], 1.0f));
     v.tc = m->tcs[v_id];
-    v.norm = norm3(vmul4v(u->viewInvTransposed, m->normals[v_id]));
+    v.norm = norm3(vmul4v(u->MVInvTransposed, m->normals[v_id]));
     return v;
 }
 
 VertexOut cubemap_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_Uniforms *u)
 {
     VertexOut v;
-    v.clip_pos = vmul4(u->viewProj, to_vec4(add3(cmul3(100.0f, m->verts[v_id]), u->cam_pos), 1.0f));
+    v.clip_pos = vmul4(u->MVP, to_vec4(add3(cmul3(100.0f, m->verts[v_id]), u->cam_pos), 1.0f));
     v.tc = m->tcs[v_id];
-    v.norm = norm3(vmul4v(u->viewInvTransposed, m->normals[v_id]));
+    v.norm = norm3(vmul4v(u->MVInvTransposed, m->normals[v_id]));
     return v;
 }
 
@@ -108,9 +119,9 @@ VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_U
     const vec3 v_norm = norm3(make3(-dh_dx, 1.0f, -dh_dy));
 
     VertexOut v;
-    v.clip_pos = vmul4(u->viewProj, to_vec4(v_pos, 1.0f));
+    v.clip_pos = vmul4(u->MVP, to_vec4(v_pos, 1.0f));
     v.tc = make2(v_pos.x, v_pos.z);
-    v.norm = norm3(vmul4v(u->viewInvTransposed, v_norm));
+    v.norm = norm3(vmul4v(u->MVInvTransposed, v_norm));
     return v;
 }
 
@@ -121,7 +132,7 @@ vec4 terrain_PS(const Fragment *f, const SGL_Uniforms *u)
     const vec2 tc = make2(2.0f*absf(fractf(s->terrain_tile_size_inv*f->tc.x)-0.5f), 
                           2.0f*absf(fractf(s->terrain_tile_size_inv*f->tc.y)-0.5f));
 
-    const vec3 nw = vmul4v(u->viewInvTransposedInv, f->norm);
+    const vec3 nw = vmul4v(u->normalToWorld, f->norm);
     const float slope_q = clampf(3.0f*sqrtf(sqrtf(nw.x*nw.x + nw.z*nw.z) / nw.y), 0.0f, 1.0f);
 
     const float ndc = f->depth * 2.0 - 1.0; 
@@ -156,7 +167,7 @@ vec4 lambert_PS(const Fragment *f, const SGL_Uniforms *u)
 {
     const Scene *s = (const Scene *)u->scene_ctx;
 
-    const vec3 albedo = sample_f32_rgb(&(s->tex), f->tc);
+    const vec3 albedo = sample_f32_rgb(&(s->static_models[s->active_model_id].tex_albedo), f->tc);
     float q = maxf(0.0f, dot3(f->norm, s->light_dir))*s->light_intensity + s->ambient_light_intensity;
     const vec3 col = cmul3(q, albedo);
 
@@ -165,7 +176,7 @@ vec4 lambert_PS(const Fragment *f, const SGL_Uniforms *u)
 
 vec4 vis_normal_PS(const Fragment *f, const SGL_Uniforms *u)
 {
-    const vec3 n_world = vmul4v(u->viewInvTransposedInv, f->norm);
+    const vec3 n_world = vmul4v(u->normalToWorld, f->norm);
     return to_vec4(add3(make3(0.25f, 0.25f, 0.25f), cmul3(0.5f, pow3(abs3(n_world), 1.0f/1.5f))), 1.0f);
 }
 
@@ -319,7 +330,37 @@ Texture_F32 load_tex(const char *filename)
     return load_tex_gm(filename, 2.2f);
 }
 
-Scene init_scene(int width, int height, const char *filename)
+void free_static_model(StaticModel *m)
+{
+    free_mesh(&(m->m));
+    SGL_free_texture_f32(&(m->tex_albedo));
+    free(m->instances);
+}
+
+static float get_height(const Scene *s, float x, float z)
+{
+    const float t_sz = s->terrain_area_size;
+    const vec2 v_tc = make2(0.5f*(x+t_sz)/t_sz, 0.5f*(z+t_sz)/t_sz);
+
+    return sample_f32_rgb(&(s->heightmap), v_tc).x;
+}
+
+StaticModel load_and_place(const Scene *s, const char *filename, const char *tex_filename, vec2 pos, float self_height, float scale)
+{
+    vec3 w_pos = make3(pos.x, self_height, pos.y);
+    w_pos.y += get_height(s, pos.x, pos.y);
+
+    StaticModel mod;
+    mod.m = load_obj(filename);
+    mod.tex_albedo = load_tex(tex_filename);
+    mod.n_instances = 1;
+    mod.instances = malloc(sizeof(mat4));
+    mod.instances[0] = mul4x4(translate4x4(w_pos), scale4x4(scale));
+    
+    return mod;
+}
+
+Scene init_scene(int width, int height)
 {
     Scene s;
 
@@ -330,9 +371,6 @@ Scene init_scene(int width, int height, const char *filename)
     s.cam.z_near = 0.01f;
     s.cam.z_far = 1000.0f;
     s.cam.aspect = (float)width/(float)height;
-
-    s.m = load_obj(filename);
-    s.tex = load_tex("resources/textures/porcelain.jpg");
 
     s.light_dir = norm3(make3(1,1,1));
     s.light_intensity = 1.0f;
@@ -360,13 +398,21 @@ Scene init_scene(int width, int height, const char *filename)
     s.cubemap_tex[CUBEMAP_BOTTOM] = load_tex_gm("resources/textures/skybox/hills_dn.png", 1.0f);
     s.cubemap_tex[CUBEMAP_TOP]    = load_tex_gm("resources/textures/skybox/hills_up.jpg", 1.0f);
 
+    s.n_static_models = 4;
+    s.static_models = malloc(s.n_static_models*sizeof(StaticModel));
+    s.static_models[0] = load_and_place(&s, "resources/Chicken_01.obj", "resources/textures/Solid_white.png", make2(1,0), 0.0f, 0.001f);
+    s.static_models[1] = load_and_place(&s, "resources/Chicken_01.obj", "resources/textures/Solid_white.png", make2(-1,1), 0.0f, 0.001f);
+    s.static_models[2] = load_and_place(&s, "resources/Bunny.obj", "resources/textures/porcelain.jpg", make2(0,0), 0.1f, 0.1f);
+    s.static_models[3] = load_and_place(&s, "resources/Roman Centurion.obj", "resources/textures/Solid_white.png", make2(0,1), 0.5f, 0.25f);
+
     return s;
 }
 
 void free_scene(Scene *s)
 {
-    free_mesh(&s->m);
-    SGL_free_texture_f32(&s->tex);
+    for (uint32_t i=0;i<s->n_static_models;i++)
+        free_static_model(&s->static_models[i]);
+    free(s->static_models);
 
     free_mesh(&s->terrain_mesh);
     SGL_free_texture_f32(&s->heightmap);
@@ -396,17 +442,21 @@ clock_t t2 = clock();
     p.scene_ctx = (void *)s;
     p.internal_ctx = s->sgl_ctx;
 
-    // p.ps = lambert_PS;
-    // p.vs = default_VS;
-    // SGL_draw_instances(&(s->m), 1, &p);
+    p.ps = lambert_PS;
+    p.vs = default_VS;
+    for (uint32_t i=0;i<s->n_static_models;i++)
+    {
+        s->active_model_id = i;
+        SGL_draw_instances(&p, &(s->static_models[i].m), s->static_models[i].instances, s->static_models[i].n_instances);
+    }
 
     p.ps = terrain_PS;
     p.vs = terrain_VS;
-    SGL_draw_instances(&(s->terrain_mesh), 1, &p);
+    SGL_draw_model(&p, &(s->terrain_mesh));
 
     p.ps = cubemap_PS;
     p.vs = cubemap_VS;
-    SGL_draw_instances(&(s->cubemap_mesh), 1, &p);
+    SGL_draw_model(&p, &(s->cubemap_mesh));
 
 clock_t t3 = clock();
 
@@ -503,11 +553,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 
 void on_terrain_set_camera(Scene *s)
 {
-    const float t_sz = s->terrain_area_size;
-    const vec2 v_tc = make2(0.5f*(s->cam.pos.x+t_sz)/t_sz, 0.5f*(s->cam.pos.z+t_sz)/t_sz);
-
-    const float h = sample_f32_rgb(&(s->heightmap), v_tc).x;
-
+    const float h = get_height(s, s->cam.pos.x, s->cam.pos.z);
     s->cam.pos = make3(s->cam.pos.x, h+terrainCameraHeight, s->cam.pos.z);
 }
 
@@ -518,13 +564,12 @@ int main(int argc, char **argv)
         printf("Usage: %s <obj_file> (optional: <width>, <height>)\n", argv[0]);
         return -1;
     }
-    const char *filename = argv[1];
-    int width  = argc > 2 ? atoi(argv[2]) : 640;
-    int height = argc > 3 ? atoi(argv[3]) : 480;
-    int fb_width = argc > 4 ? atoi(argv[4]) : 640;
-    int fb_height = argc > 5 ? atoi(argv[5]) : 480;
+    int width  = argc > 1 ? atoi(argv[1]) : 640;
+    int height = argc > 2 ? atoi(argv[2]) : 480;
+    int fb_width = argc > 3 ? atoi(argv[3]) : 640;
+    int fb_height = argc > 4 ? atoi(argv[4]) : 480;
 
-    Scene scene = init_scene(fb_width, fb_height, filename);
+    Scene scene = init_scene(fb_width, fb_height);
     scene.present_buffer.data = malloc(4 * width * height);
     scene.present_buffer.w = width;
     scene.present_buffer.h = height;
