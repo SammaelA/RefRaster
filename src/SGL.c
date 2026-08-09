@@ -18,14 +18,19 @@ void SGL_free_framebuffer(Texture_F32 *fb)
     free(fb->data);
     fb->data = NULL;
 }
+
 void SGL_clear_framebuffer(Texture_F32 *fb, float value)
 {
+    const uint32_t depth_ch = (fb->ch < 4) ? 0 : CHANNEL_DEPTH;
     for (int i = 0; i < fb->w * fb->h; i++)
     {
-        fb->data[i*fb->ch + CHANNEL_R] = value;
-        fb->data[i*fb->ch + CHANNEL_G] = value;
-        fb->data[i*fb->ch + CHANNEL_B] = value;
-        fb->data[i*fb->ch + CHANNEL_DEPTH] = 2.0f;
+        if (fb->ch == 4)
+        {
+            fb->data[i*fb->ch + CHANNEL_R] = value;
+            fb->data[i*fb->ch + CHANNEL_G] = value;
+            fb->data[i*fb->ch + CHANNEL_B] = value;
+        }
+        fb->data[i*fb->ch + depth_ch] = 2.0f;
     }
 }
 
