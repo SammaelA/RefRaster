@@ -79,6 +79,9 @@ typedef struct
     vec3  light_dir;
     float light_intensity;
     float ambient_light_intensity;
+
+    Texture_F32 static_shadowmap;
+    mat4 shadowmap_mvp;
 } Scene;
 
 VertexOut default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_Uniforms *u)
@@ -87,6 +90,8 @@ VertexOut default_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_U
     v.clip_pos = vmul4(u->MVP, to_vec4(m->verts[v_id], 1.0f));
     v.tc = m->tcs[v_id];
     v.norm = norm3(vmul4v(u->MVInvTransposed, m->normals[v_id]));
+    v.world_pos = vmul4p(u->model, m->verts[v_id]);
+    //printf("clip pos = %f, %f, %f\n", v.clip_pos.x, v.clip_pos.y, v.clip_pos.z);
     return v;
 }
 
@@ -126,10 +131,15 @@ VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_U
     const float dh_dy = (1-dxy.x)*(h_quad.z - h_quad.x) + dxy.x*(h_quad.w - h_quad.y);
     const vec3 v_norm = norm3(make3(-dh_dx, 1.0f, -dh_dy));
 
+    //vec3 world_pos = add3(m->verts[v_id], make3(u->cam_pos.x, 0, u->cam_pos.z));
+    //world_pos.y = v_pos.y;
+    //printf("world pos %f %f %f, vpos %f %f %f\n", world_pos.x, world_pos.y, world_pos.z, v_pos.x, v_pos.y, v_pos.z);
+
     VertexOut v;
     v.clip_pos = vmul4(u->MVP, to_vec4(v_pos, 1.0f));
     v.tc = make2(v_pos.x, v_pos.z);
     v.norm = norm3(vmul4v(u->MVInvTransposed, v_norm));
+    v.world_pos = v_pos;
     return v;
 }
 
@@ -152,9 +162,23 @@ vec4 terrain_PS(const Fragment *f, const SGL_Uniforms *u)
     const vec3 albedo_grass = slope_q < 0.99f ? sample_f32_rgb_mip(&(s->grass), tc, mip) : make3(0.0f, 1.0f, 0.0f);
     const vec3 albedo_rocky = slope_q > 0.01f ? sample_f32_rgb_mip(&(s->rocky_grass), tc, mip) : albedo_grass;
     const vec3 albedo = lerp3(slope_q, albedo_grass, albedo_rocky);
-    float q = maxf(0.0f, dot3(f->norm, s->light_dir))*s->light_intensity + s->ambient_light_intensity;
-    const vec3 col = cmul3(q, albedo);
 
+    float in_light = 1.0f;
+    if (s->static_shadowmap.data != NULL)
+    {
+        VertexOut v;
+        v.clip_pos = vmul4(s->shadowmap_mvp, to_vec4(f->world_pos, 1.0f));
+        v.norm = make3(0,0,0);
+        v.tc = make2(0,0);
+        Fragment nf = make_fragment(v, 1, 1, 0);
+        if (nf.depth < 1.0f)
+        {
+            const float sh_depth = sample_f32_rgb(&(s->static_shadowmap), nf.screen_pos).x;
+            in_light = sh_depth > nf.depth;
+        }
+    }
+    const float q = in_light*maxf(0.0f, dot3(f->norm, s->light_dir))*s->light_intensity;
+    const vec3 col = cmul3(q + s->ambient_light_intensity, albedo);
     return to_vec4(col, 1.0f);
 }
 
@@ -368,6 +392,48 @@ StaticModel load_and_place(const Scene *s, const char *filename, const char *tex
     return mod;
 }
 
+Texture_F32 create_shadow_map(Scene *s, uint32_t size, float height, float fov)
+{
+    const vec3 right = cross3(make3(0,1,0), s->light_dir);
+    const vec3 center = make3(0,3,0);
+    SGL_Camera cam;
+    cam.fovy = fov;
+    cam.pos = add3(center, cmul3(height, s->light_dir));
+    cam.lookAt = center;
+    cam.up = cross3(s->light_dir, right);
+    cam.z_near = 0.1f;
+    cam.z_far = 1000.0f;
+    cam.aspect = 1.0f;
+
+    Texture_F32 shadow_map = SGL_init_framebuffer(size, size, 1);
+    SGL_clear_framebuffer(&shadow_map, 1.0f);
+
+    SGL_Pipeline p;
+    p.cam = cam;
+    p.fb =  shadow_map;
+    p.scene_ctx = (void *)s;
+    p.internal_ctx = s->sgl_ctx;
+
+    p.ps = NULL;
+    p.vs = default_VS;
+    for (uint32_t i=0;i<s->n_static_models;i++)
+    {
+        s->active_model_id = i;
+        SGL_draw_instances(&p, &(s->static_models[i].m), s->static_models[i].instances, s->static_models[i].n_instances);
+    }
+
+    save_image_f32_png_rgb(shadow_map.data, "saves/shadow_map.png", 
+                           shadow_map.w, shadow_map.h, shadow_map.ch, 1.0f);
+    
+    const mat4 view = look_at(cam.pos, cam.lookAt, cam.up);
+    const mat4 proj = perspective(cam.fovy, cam.aspect, cam.z_near, cam.z_far);                           
+    s->static_shadowmap = shadow_map;
+    s->shadowmap_mvp = mul4x4(proj, view);
+
+    return shadow_map;
+
+}
+
 Scene init_scene(int width, int height)
 {
     Scene s;
@@ -408,10 +474,12 @@ Scene init_scene(int width, int height)
 
     s.n_static_models = 4;
     s.static_models = malloc(s.n_static_models*sizeof(StaticModel));
-    s.static_models[0] = load_and_place(&s, "resources/Chicken_01.obj", "resources/textures/Solid_white.png", make2(1,0), 0.0f, 0.001f);
-    s.static_models[1] = load_and_place(&s, "resources/Chicken_01.obj", "resources/textures/Solid_white.png", make2(-1,1), 0.0f, 0.001f);
-    s.static_models[2] = load_and_place(&s, "resources/Bunny.obj", "resources/textures/porcelain.jpg", make2(0,0), 0.1f, 0.1f);
-    s.static_models[3] = load_and_place(&s, "resources/Roman Centurion.obj", "resources/textures/Solid_white.png", make2(0,1), 0.5f, 0.25f);
+    s.static_models[0] = load_and_place(&s, "resources/Chicken_01.obj", "resources/textures/Solid_white.png", make2(0.5,0), 0.0f, 0.001f);
+    s.static_models[1] = load_and_place(&s, "resources/Chicken_01.obj", "resources/textures/Solid_white.png", make2(-0.5,0), 0.0f, 0.001f);
+    s.static_models[2] = load_and_place(&s, "resources/Bunny.obj", "resources/textures/porcelain.jpg", make2(0,-0.5), 0.1f, 0.1f);
+    s.static_models[3] = load_and_place(&s, "resources/Roman Centurion.obj", "resources/textures/Solid_white.png", make2(0,0.5), 0.3f, 0.15f);
+
+    s.static_shadowmap = create_shadow_map(&s, 2048, 1.0f, M_PI/4.0f);
 
     return s;
 }
@@ -434,6 +502,8 @@ void free_scene(Scene *s)
     SGL_free_framebuffer(&s->fb);
     SGL_free_texture_u8(&s->present_buffer);
     SGL_free_internal_ctx(s->sgl_ctx);
+
+    SGL_free_texture_f32(&s->static_shadowmap);
 }
 
 void render_scene(Scene *s)
@@ -502,6 +572,7 @@ float cameraSpeed = 1.0f;
 float terrainCameraHeight = 0.1f;
 float freeCameraSpeedMult = 10.0f;
 int freeCamera = 1;
+const Scene *g_scene = NULL;
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
     if (firstMouse)
@@ -556,7 +627,11 @@ void process_input(GLFWwindow *window, Scene *s, float dt)
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     if (key == GLFW_KEY_C && action == GLFW_PRESS)
+    {
+        printf("camera pos %f %f %f\n", 
+               g_scene->cam.pos.x, g_scene->cam.pos.y, g_scene->cam.pos.z);
         freeCamera = freeCamera ? 0 : 1;
+    }
 }
 
 void on_terrain_set_camera(Scene *s)
@@ -582,6 +657,8 @@ int main(int argc, char **argv)
     scene.present_buffer.w = width;
     scene.present_buffer.h = height;
     scene.present_buffer.ch = 4;
+
+    g_scene = &scene;
 
     GLFWwindow *window;
     

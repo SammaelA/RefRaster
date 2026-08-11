@@ -80,6 +80,7 @@ static inline VertexOut lerp_vertex(VertexOut a, VertexOut b, float t)
     r.clip_pos = add4(a.clip_pos, cmul4(t, sub4(b.clip_pos, a.clip_pos)));
     r.tc       = add2(a.tc,       cmul2(t, sub2(b.tc,       a.tc)));
     r.norm     = add3(a.norm,     cmul3(t, sub3(b.norm,     a.norm)));
+    r.world_pos = add3(a.world_pos, cmul3(t, sub3(b.world_pos, a.world_pos)));
     return r;
 }
 
@@ -103,7 +104,7 @@ static int clip_near(const VertexOut in[3], VertexOut out[4])
 }
 
 // Perspective divide + viewport transform. Only valid once clip_near has run.
-static Fragment make_fragment(VertexOut v, uint32_t w, uint32_t h, uint32_t frag_id)
+Fragment make_fragment(VertexOut v, uint32_t w, uint32_t h, uint32_t frag_id)
 {
     const float inv_w = 1.0f / v.clip_pos.w;   // w >= z_near > 0 after near clipping
     Fragment f;
@@ -114,6 +115,9 @@ static Fragment make_fragment(VertexOut v, uint32_t w, uint32_t h, uint32_t frag
     f.tc         = v.tc;
     f.norm       = v.norm;
     f.frag_id    = frag_id;
+    f.world_pos  = v.world_pos;
+    //if (frag_id == 0)
+    //printf("clip pos %f %f %f %f, screen pos %f %f\n", v.clip_pos.x, v.clip_pos.y, v.clip_pos.z, v.clip_pos.w, f.screen_pos.x, f.screen_pos.y);
     return f;
 }
 
@@ -148,6 +152,9 @@ inline static void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_
     vec3 nx = cmul3(invW.M[0], pts[0].norm);
     vec3 ny = cmul3(invW.M[1], pts[1].norm);
     vec3 nz = cmul3(invW.M[2], pts[2].norm);
+    vec3 wpx = cmul3(invW.M[0], pts[0].world_pos);
+    vec3 wpy = cmul3(invW.M[1], pts[1].world_pos);
+    vec3 wpz = cmul3(invW.M[2], pts[2].world_pos);
 
     const float a_thr = 1e-6f*absf(signed_area(a, b, c));
 
@@ -175,6 +182,7 @@ inline static void rasterize_triangle(const Fragment *pts, Texture_F32 *fb, SGL_
             f.inv_w = 1.0f / w;
             f.norm = cmul3(w, add3(add3(cmul3(bary.x, nx), cmul3(bary.y, ny)), cmul3(bary.z, nz)));
             f.tc = cmul2(w, add2(add2(cmul2(bary.x, tx), cmul2(bary.y, ty)), cmul2(bary.z, tz)));
+            f.world_pos = cmul3(w, add3(add3(cmul3(bary.x, wpx), cmul3(bary.y, wpy)), cmul3(bary.z, wpz)));
             f.screen_pos = p;
 
             if (depth_only == 0)
@@ -197,6 +205,7 @@ void SGL_draw_instances(SGL_Pipeline *p, const mesh *m, const mat4 *instances, u
     uniforms.view = look_at(p->cam.pos, p->cam.lookAt, p->cam.up);
     uniforms.proj = perspective(p->cam.fovy, p->cam.aspect, p->cam.z_near, p->cam.z_far);
     uniforms.normalToWorld = inverse4x4(transpose4(inverse4x4(uniforms.view)));
+    uniforms.viewProjInv = inverse4x4(mul4x4(uniforms.proj, uniforms.view));
     // uniforms.viewProj = mul4x4(uniforms.proj, uniforms.view);
     // uniforms.viewInvTransposed = transpose4(inverse4x4(uniforms.view));
     // uniforms.normalToWorld = inverse4x4(transpose4(inverse4x4(uniforms.view)));

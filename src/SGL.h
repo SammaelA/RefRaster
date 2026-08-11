@@ -28,6 +28,7 @@ typedef struct
     vec4 clip_pos;   // homogeneous clip-space position, before the perspective divide
     vec2 tc;
     vec3 norm;
+    vec3 world_pos;
 } VertexOut;
 
 typedef struct
@@ -37,6 +38,7 @@ typedef struct
     float depth;   // NDC z, affine in screen space (used for the depth buffer)
     float inv_w;   // 1 / clip-space w, the weight for perspective-correct interpolation
     vec3 norm;
+    vec3 world_pos;
     uint32_t frag_id;
 } Fragment;
 
@@ -71,6 +73,7 @@ typedef struct
     mat4 model, view, proj;
     mat4 MVP, MVInvTransposed;
     mat4 normalToWorld;
+    mat4 viewProjInv;
     const void *scene_ctx;
 } SGL_Uniforms;
 
@@ -113,4 +116,5 @@ void SGL_draw_model(SGL_Pipeline *p, const mesh *m);
 void SGL_draw_instances(SGL_Pipeline *p, const mesh *m, const mat4 *instances, uint32_t instance_count);
 void SGL_resolve_simple(const Texture_F32 fb, Texture_U8 present_buffer);
 
+Fragment make_fragment(VertexOut v, uint32_t w, uint32_t h, uint32_t frag_id);
 #endif
