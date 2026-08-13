@@ -18,8 +18,7 @@
 // 6) Cubemap: ~1 hour
 // 7) Simple mipmaps (depth-based): ~1 hour
 // 8) Proper instancing and scene management: ~3 hours
-// TODO
-// 9) Shadow mapping
+// 9) Shadow mapping: ~3 hours
 //10) Faster rasterization techniques
 //11) Multithreading
 //12) Frustum culling
@@ -54,9 +53,49 @@ typedef struct
     mat4 *instances;
 } StaticModel;
 
+typedef enum
+{
+    NONE,
+    MASK,
+    DEPTH,
+    LAMBERT_NO_TEX,
+    LAMBERT,
+    BASE_RENDER_MODE_COUNT
+} BaseRenderMode;
+
+typedef enum
+{
+    NO_SHADOWS,
+    USE_SHADOWS,
+    SHADOWS_MODE_COUNT
+} ShadowsMode;
+
+typedef enum
+{
+    NO_CUBEMAP,
+    USE_CUBEMAP,
+    CUBEMAP_MODE_COUNT
+} CubemapMode;
+
+typedef struct
+{
+    BaseRenderMode render_mode;
+    ShadowsMode shadows_mode;
+    CubemapMode cubemap_mode;
+} RenderSettings;
+
+RenderSettings get_default_render_settings()
+{
+    RenderSettings settings;
+    settings.render_mode = LAMBERT;
+    settings.shadows_mode = USE_SHADOWS;
+    settings.cubemap_mode = USE_CUBEMAP;
+    return settings;
+}
 typedef struct
 {
     SGL_Camera cam;
+    RenderSettings settings;
 
     uint32_t active_model_id;
     uint32_t n_static_models;
@@ -104,13 +143,6 @@ VertexOut cubemap_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_U
     return v;
 }
 
-vec4 cubemap_PS(const Fragment *f, const SGL_Uniforms *u)
-{
-    const Scene *s = (const Scene *)u->scene_ctx;
-    const vec3 col = sample_f32_rgb(&(s->cubemap_tex[f->frag_id/2]), f->tc);
-    return to_vec4(col, 1.0f);
-}
-
 VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_Uniforms *u)
 {
     const Scene *s = (const Scene *)u->scene_ctx;
@@ -131,16 +163,19 @@ VertexOut terrain_VS(uint32_t inst_id, uint32_t v_id, const mesh *m, const SGL_U
     const float dh_dy = (1-dxy.x)*(h_quad.z - h_quad.x) + dxy.x*(h_quad.w - h_quad.y);
     const vec3 v_norm = norm3(make3(-dh_dx, 1.0f, -dh_dy));
 
-    //vec3 world_pos = add3(m->verts[v_id], make3(u->cam_pos.x, 0, u->cam_pos.z));
-    //world_pos.y = v_pos.y;
-    //printf("world pos %f %f %f, vpos %f %f %f\n", world_pos.x, world_pos.y, world_pos.z, v_pos.x, v_pos.y, v_pos.z);
-
     VertexOut v;
     v.clip_pos = vmul4(u->MVP, to_vec4(v_pos, 1.0f));
     v.tc = make2(v_pos.x, v_pos.z);
     v.norm = norm3(vmul4v(u->MVInvTransposed, v_norm));
     v.world_pos = v_pos;
     return v;
+}
+
+vec4 cubemap_PS(const Fragment *f, const SGL_Uniforms *u)
+{
+    const Scene *s = (const Scene *)u->scene_ctx;
+    const vec3 col = sample_f32_rgb(&(s->cubemap_tex[f->frag_id/2]), f->tc);
+    return to_vec4(col, 1.0f);
 }
 
 vec4 terrain_PS(const Fragment *f, const SGL_Uniforms *u)   
@@ -159,12 +194,21 @@ vec4 terrain_PS(const Fragment *f, const SGL_Uniforms *u)
     const float linearDepth = (2.0 * near * far) / (far + near - ndc * (far - near));	
     const float mip = clampf(log2f(linearDepth), 0.0f, 8.0f);
 
-    const vec3 albedo_grass = slope_q < 0.99f ? sample_f32_rgb_mip(&(s->grass), tc, mip) : make3(0.0f, 1.0f, 0.0f);
-    const vec3 albedo_rocky = slope_q > 0.01f ? sample_f32_rgb_mip(&(s->rocky_grass), tc, mip) : albedo_grass;
-    const vec3 albedo = lerp3(slope_q, albedo_grass, albedo_rocky);
+    vec3 albedo;
+    if (s->settings.render_mode == LAMBERT)
+    {
+        const vec3 albedo_grass = slope_q < 0.99f ? sample_f32_rgb_mip(&(s->grass), tc, mip) : make3(0.0f, 1.0f, 0.0f);
+        const vec3 albedo_rocky = slope_q > 0.01f ? sample_f32_rgb_mip(&(s->rocky_grass), tc, mip) : albedo_grass;
+        albedo = lerp3(slope_q, albedo_grass, albedo_rocky);
+    }
+    else //LAMBERT_NO_TEX
+    {
+        albedo = make3(0.5f, 0.5f, 0.5f);
+    }
 
     float in_light = 1.0f;
-    if (s->static_shadowmap.data != NULL)
+    if (s->static_shadowmap.data != NULL && 
+        s->settings.shadows_mode == USE_SHADOWS)
     {
         VertexOut v;
         v.clip_pos = vmul4(s->shadowmap_mvp, to_vec4(f->world_pos, 1.0f));
@@ -226,6 +270,16 @@ vec4 lambert_no_tex_PS(const Fragment *f, const SGL_Uniforms *u)
 vec4 vis_tc_PS(const Fragment *f, const SGL_Uniforms *u)
 {
     return make4(f->tc.x, f->tc.y, 0.0f, 1.0f);
+}
+
+vec4 mask_PS(const Fragment *, const SGL_Uniforms *)
+{
+    return make4(1.0f, 1.0f, 1.0f, 1.0f);
+}
+
+vec4 depth_PS(const Fragment *f, const SGL_Uniforms *)
+{
+    return make4(f->depth, f->depth, f->depth, 1.0f);
 }
 
 mesh init_empty_mesh(int n_vert, int n_tri)
@@ -438,6 +492,8 @@ Scene init_scene(int width, int height)
 {
     Scene s;
 
+    s.settings = get_default_render_settings();
+
     s.cam.fovy = M_PI/6;
     s.cam.pos = make3(0,3,3);
     s.cam.lookAt = make3(0, 0, 0);
@@ -506,6 +562,18 @@ void free_scene(Scene *s)
     SGL_free_texture_f32(&s->static_shadowmap);
 }
 
+SGL_PixelShader ps_from_settings(RenderSettings *settings, const SGL_PixelShader default_ps)
+{
+    switch (settings->render_mode)
+    {
+        case NONE: return NULL;
+        case MASK: return mask_PS;
+        case DEPTH: return depth_PS;
+        default: return default_ps;
+    }
+    return default_ps;
+}
+
 void render_scene(Scene *s)
 {
 clock_t t1 = clock();
@@ -520,7 +588,7 @@ clock_t t2 = clock();
     p.scene_ctx = (void *)s;
     p.internal_ctx = s->sgl_ctx;
 
-    p.ps = lambert_PS;
+    p.ps = ps_from_settings(&s->settings, lambert_PS);
     p.vs = default_VS;
     for (uint32_t i=0;i<s->n_static_models;i++)
     {
@@ -528,13 +596,16 @@ clock_t t2 = clock();
         SGL_draw_instances(&p, &(s->static_models[i].m), s->static_models[i].instances, s->static_models[i].n_instances);
     }
 
-    p.ps = terrain_PS;
+    p.ps = ps_from_settings(&s->settings, terrain_PS);
     p.vs = terrain_VS;
     SGL_draw_model(&p, &(s->terrain_mesh));
 
-    p.ps = cubemap_PS;
-    p.vs = cubemap_VS;
-    SGL_draw_model(&p, &(s->cubemap_mesh));
+    if (s->settings.cubemap_mode == USE_CUBEMAP)
+    {
+        p.ps = cubemap_PS;
+        p.vs = cubemap_VS;
+        SGL_draw_model(&p, &(s->cubemap_mesh));
+    }
 
 clock_t t3 = clock();
 
@@ -545,7 +616,7 @@ clock_t t4 = clock();
     static uint32_t frameId = 0;
     static float average_times[3] = {0,0,0}; 
 
-    const float alpha = frameId == 0 ? 0.0f : 0.99f;
+    const float alpha = frameId == 0 ? 0.0f : 0.9f;
     float times[3];
     times[0] = 1000.0f * (t2 - t1) / CLOCKS_PER_SEC;
     times[1] = 1000.0f * (t3 - t2) / CLOCKS_PER_SEC;
@@ -555,7 +626,7 @@ clock_t t4 = clock();
         average_times[i] = alpha*average_times[i] + (1-alpha)*times[i];
     frameId++;
     
-    if (frameId % 100 == 0)
+    if (frameId % 10 == 0)
     {
         printf("clear FB:   %5.2f ms\n", average_times[0]);
         printf("Draw:       %5.2f ms\n", average_times[1]);
@@ -572,7 +643,7 @@ float cameraSpeed = 1.0f;
 float terrainCameraHeight = 0.1f;
 float freeCameraSpeedMult = 10.0f;
 int freeCamera = 1;
-const Scene *g_scene = NULL;
+Scene *g_scene = NULL;
 void mouse_callback(GLFWwindow* window, double xpos, double ypos)
 {
     if (firstMouse)
@@ -631,6 +702,19 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         printf("camera pos %f %f %f\n", 
                g_scene->cam.pos.x, g_scene->cam.pos.y, g_scene->cam.pos.z);
         freeCamera = freeCamera ? 0 : 1;
+    }
+
+    if (key == GLFW_KEY_R && action == GLFW_PRESS)
+    {
+        g_scene->settings.render_mode = (g_scene->settings.render_mode+1) % BASE_RENDER_MODE_COUNT;
+    }
+    if (key == GLFW_KEY_T && action == GLFW_PRESS)
+    {
+        g_scene->settings.shadows_mode = (g_scene->settings.shadows_mode+1) % SHADOWS_MODE_COUNT;
+    }
+    if (key == GLFW_KEY_Y && action == GLFW_PRESS)
+    {
+        g_scene->settings.cubemap_mode = (g_scene->settings.cubemap_mode+1) % CUBEMAP_MODE_COUNT;
     }
 }
 
