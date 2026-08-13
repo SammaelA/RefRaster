@@ -243,7 +243,11 @@ vec4 lambert_PS(const Fragment *f, const SGL_Uniforms *u)
 {
     const Scene *s = (const Scene *)u->scene_ctx;
 
-    const vec3 albedo = sample_f32_rgb(&(s->static_models[s->active_model_id].tex_albedo), f->tc);
+    vec3 albedo;
+    if (s->settings.render_mode == LAMBERT)
+        albedo = sample_f32_rgb(&(s->static_models[s->active_model_id].tex_albedo), f->tc);
+    else //LAMBERT_NO_TEX
+        albedo = make3(0.8f, 0.8f, 0.8f);
     float q = maxf(0.0f, dot3(f->norm, s->light_dir))*s->light_intensity + s->ambient_light_intensity;
     const vec3 col = cmul3(q, albedo);
 
