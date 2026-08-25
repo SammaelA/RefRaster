@@ -6,7 +6,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-set(SOURCES src/main.c src/image_utils.c src/mesh_utils.c src/SGL.c src/perlin_noise.c)
+set(SOURCES src/main.c src/image_utils.c src/mesh_utils.c src/SGL.c src/perlin_noise.c src/FXAA.c)
 
 add_executable(raster ${SOURCES})
 
@@ -18,3 +18,7 @@ endif()
 
 target_include_directories(raster PUBLIC src ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(raster PUBLIC m GL glfw)
+
+find_package(OpenMP REQUIRED)
+target_link_libraries(raster PUBLIC ${OpenMP_CXX_LIBRARIES})
+target_compile_options(raster PUBLIC ${OpenMP_CXX_FLAGS})

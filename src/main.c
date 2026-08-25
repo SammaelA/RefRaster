@@ -3,6 +3,7 @@
 #include "mesh_utils.h"
 #include "SGL.h"
 #include "perlin_noise.h"
+#include "FXAA.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,8 @@
 // 7) Simple mipmaps (depth-based): ~1 hour
 // 8) Proper instancing and scene management: ~3 hours
 // 9) Shadow mapping: ~3 hours
+//10) Slow FXAA: ~2 hours
+
 //10) Faster rasterization techniques
 //11) Multithreading
 //12) Frustum culling
@@ -77,11 +80,19 @@ typedef enum
     CUBEMAP_MODE_COUNT
 } CubemapMode;
 
+typedef enum
+{
+    NO_AA,
+    FXAA,
+    AA_MODE_COUNT
+} AAMode;
+
 typedef struct
 {
     BaseRenderMode render_mode;
     ShadowsMode shadows_mode;
     CubemapMode cubemap_mode;
+    AAMode aa_mode;
 } RenderSettings;
 
 RenderSettings get_default_render_settings()
@@ -90,6 +101,7 @@ RenderSettings get_default_render_settings()
     settings.render_mode = LAMBERT;
     settings.shadows_mode = USE_SHADOWS;
     settings.cubemap_mode = USE_CUBEMAP;
+    settings.aa_mode = FXAA;
     return settings;
 }
 typedef struct
@@ -112,6 +124,7 @@ typedef struct
     Texture_F32 cubemap_tex[6];
 
     Texture_F32 fb;
+    Texture_F32 fb_aa;
     Texture_U8 present_buffer;
     void *sgl_ctx;
 
@@ -511,6 +524,7 @@ Scene init_scene(int width, int height)
     s.ambient_light_intensity = 0.33f;
 
     s.fb = SGL_init_framebuffer(width, height, 4);
+    s.fb_aa = SGL_init_framebuffer(width, height, 4);
     s.sgl_ctx = SGL_init_internal_ctx();
 
     Texture_F32 grass = load_tex("resources/textures/Grass_09-256x256.png");
@@ -560,6 +574,7 @@ void free_scene(Scene *s)
         SGL_free_texture_f32(&s->cubemap_tex[i]);
 
     SGL_free_framebuffer(&s->fb);
+    SGL_free_framebuffer(&s->fb_aa);
     SGL_free_texture_u8(&s->present_buffer);
     SGL_free_internal_ctx(s->sgl_ctx);
 
@@ -613,7 +628,31 @@ clock_t t2 = clock();
 
 clock_t t3 = clock();
 
-    SGL_resolve_simple(s->fb, s->present_buffer);
+    if (s->settings.aa_mode == FXAA)
+    {
+        const vec2 rcp = make2(1.0f/s->fb.w, 1.0f/s->fb.h);
+        //#pragma omp parallel for collapse(2)
+        for (int y=0;y<s->fb.h;y++)
+        {
+            for (int x=0;x<s->fb.w;x++)
+            {
+                const vec2 pos = make2((float)x/s->fb.w, (float)y/s->fb.h);
+                const vec4 aa_pixel = FXAAPixelShader(&s->fb, pos, rcp);
+                //printf("AA pixel = %f, %f, %f, %f\n", aa_pixel.x, aa_pixel.y, aa_pixel.z, aa_pixel.w);
+                const int off = 4*(y*s->fb.w+x);
+                s->fb_aa.data[off+0] = aa_pixel.x;
+                s->fb_aa.data[off+1] = aa_pixel.y;
+                s->fb_aa.data[off+2] = aa_pixel.z;
+                s->fb_aa.data[off+3] = aa_pixel.w;
+            }
+        }
+
+        SGL_resolve_simple(s->fb_aa, s->present_buffer);
+    }
+    else
+    {
+        SGL_resolve_simple(s->fb, s->present_buffer);
+    }
 
 clock_t t4 = clock();
 
@@ -719,6 +758,10 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
     if (key == GLFW_KEY_Y && action == GLFW_PRESS)
     {
         g_scene->settings.cubemap_mode = (g_scene->settings.cubemap_mode+1) % CUBEMAP_MODE_COUNT;
+    }
+    if (key == GLFW_KEY_U && action == GLFW_PRESS)
+    {
+        g_scene->settings.aa_mode = (g_scene->settings.aa_mode+1) % AA_MODE_COUNT;
     }
 }
 

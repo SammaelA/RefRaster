@@ -700,4 +700,71 @@ static inline mat4 perspective(float fovy, float aspect, float zNear, float zFar
     return res;
 }
 
+typedef struct
+{
+    union
+    {
+        struct
+        {
+            int x;
+            int y;
+        };
+        int M[2];
+    };
+} ivec2;
+typedef struct
+{
+    union
+    {
+        struct
+        {
+            int x;
+            int y;
+            int z;
+        };
+        int M[3];
+    };
+} ivec3;
+typedef struct
+{
+    union
+    {
+        struct
+        {
+            int x;
+            int y;
+            int z;
+            int w;
+        };
+        int M[4];
+    };
+} ivec4;
+
+static inline ivec2 makei2(int x, int y)
+{
+    ivec2 v;
+    v.x = x;
+    v.y = y;
+    return v;
+}
+
+static inline ivec3 makei3(int x, int y, int z)
+{
+    ivec3 v;
+    v.x = x;
+    v.y = y;
+    v.z = z;
+    return v;
+}
+
+static inline ivec4 makei4(int x, int y, int z, int w)
+{
+    ivec4 v;
+    v.x = x;
+    v.y = y;
+    v.z = z;
+    v.w = w;
+    return v;
+}
+
 #endif

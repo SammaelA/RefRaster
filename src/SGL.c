@@ -380,15 +380,15 @@ void SGL_free_texture_f32_mip(Texture_F32Mip *tex)
 }
 
 
-inline static vec3 sample_f32_rgb_raw(const float *data, int w, int h, int n_ch, vec2 tc)
+inline static vec3 sample_f32_rgb_raw(const float *data, int w, int h, int n_ch, vec2 tc, ivec2 offset)
 {
     const vec2 tc_t = make2(clampf(tc.x, 0.0f, 1-1e-6f)*w, clampf(tc.y, 0.0f, 1-1e-6f)*h);
     const vec2 tc_i = make2((int)tc_t.x, (int)tc_t.y);
     const vec2 dtc  = sub2(tc_t, tc_i);
 
     vec3 res = make_zero3();
-    const int i = tc_i.x;
-    const int j = tc_i.y;
+    const int i = tc_i.x + offset.x;
+    const int j = tc_i.y + offset.y;
     const int di = (i == w-1) ? 0 : 1;
     const int dj = (j == h-1) ? 0 : 1;
     for (int ch=0; ch<mini(3, n_ch); ch++)
@@ -403,7 +403,12 @@ inline static vec3 sample_f32_rgb_raw(const float *data, int w, int h, int n_ch,
 
 vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc)
 {
-    return sample_f32_rgb_raw(tex->data, tex->w, tex->h, tex->ch, tc);
+    return sample_f32_rgb_raw(tex->data, tex->w, tex->h, tex->ch, tc, makei2(0, 0));
+}
+
+vec3 sample_f32_rgb_offset(const Texture_F32 *tex, vec2 tc, ivec2 offset)
+{
+    return sample_f32_rgb_raw(tex->data, tex->w, tex->h, tex->ch, tc, offset);
 }
 
 vec3 sample_f32_rgb_mip(const Texture_F32Mip *tex, vec2 tc, float mip)
@@ -412,8 +417,8 @@ vec3 sample_f32_rgb_mip(const Texture_F32Mip *tex, vec2 tc, float mip)
     int mip0 = (int)floorf(mip);
     int mip1 = mini(mip0 + 1, tex->mips-1);
     float dmip = mip - mip0;
-    vec3 c0 = sample_f32_rgb_raw(tex->data[mip0], tex->ws[mip0], tex->hs[mip0], tex->ch, tc);
-    vec3 c1 = (mip1 != mip0 && dmip > 1e-4f) ? sample_f32_rgb_raw(tex->data[mip1], tex->ws[mip1], tex->hs[mip1], tex->ch, tc) : c0;
+    vec3 c0 = sample_f32_rgb_raw(tex->data[mip0], tex->ws[mip0], tex->hs[mip0], tex->ch, tc, makei2(0, 0));
+    vec3 c1 = (mip1 != mip0 && dmip > 1e-4f) ? sample_f32_rgb_raw(tex->data[mip1], tex->ws[mip1], tex->hs[mip1], tex->ch, tc, makei2(0, 0)) : c0;
     return lerp3(dmip, c0, c1);
 }
 
