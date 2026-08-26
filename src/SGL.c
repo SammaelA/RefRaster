@@ -387,8 +387,9 @@ inline static vec3 sample_f32_rgb_raw(const float *data, int w, int h, int n_ch,
     const vec2 dtc  = sub2(tc_t, tc_i);
 
     vec3 res = make_zero3();
-    const int i = tc_i.x + offset.x;
-    const int j = tc_i.y + offset.y;
+    // clamp after the offset: without it a non-zero offset walks off the edge
+    const int i = clampi(tc_i.x + offset.x, 0, w-1);
+    const int j = clampi(tc_i.y + offset.y, 0, h-1);
     const int di = (i == w-1) ? 0 : 1;
     const int dj = (j == h-1) ? 0 : 1;
     for (int ch=0; ch<mini(3, n_ch); ch++)
@@ -420,6 +421,31 @@ vec3 sample_f32_rgb_mip(const Texture_F32Mip *tex, vec2 tc, float mip)
     vec3 c0 = sample_f32_rgb_raw(tex->data[mip0], tex->ws[mip0], tex->hs[mip0], tex->ch, tc, makei2(0, 0));
     vec3 c1 = (mip1 != mip0 && dmip > 1e-4f) ? sample_f32_rgb_raw(tex->data[mip1], tex->ws[mip1], tex->hs[mip1], tex->ch, tc, makei2(0, 0)) : c0;
     return lerp3(dmip, c0, c1);
+}
+
+vec4 sample_u8_rgba(const Texture_U8 *tex, vec2 tc)
+{
+    const int w = tex->w, h = tex->h, n_ch = tex->ch;
+    const unsigned char *data = tex->data;
+
+    const vec2 tc_t = make2(clampf(tc.x, 0.0f, 1-1e-6f)*w, clampf(tc.y, 0.0f, 1-1e-6f)*h);
+    const vec2 tc_i = make2((int)tc_t.x, (int)tc_t.y);
+    const vec2 dtc  = sub2(tc_t, tc_i);
+
+    vec4 res = make_zero4();
+    const int i = tc_i.x;
+    const int j = tc_i.y;
+    const int di = (i == w-1) ? 0 : 1;
+    const int dj = (j == h-1) ? 0 : 1;
+    const float inv255 = 1.0f/255.0f;
+    for (int ch=0; ch<mini(4, n_ch); ch++)
+    {
+        res.M[ch] = inv255*((1-dtc.x)*(1-dtc.y)*data[n_ch*(w*(j+0) + (i+0))+ch] +
+                              (dtc.x)*(1-dtc.y)*data[n_ch*(w*(j+0) + (i+di))+ch] +
+                            (1-dtc.x)*  (dtc.y)*data[n_ch*(w*(j+dj) + (i+0))+ch] +
+                              (dtc.x)*  (dtc.y)*data[n_ch*(w*(j+dj) + (i+di))+ch]);
+    }
+    return res;
 }
 
 vec4 gather_f32(const Texture_F32 *tex, vec2 tc, int ch, vec2 *out_dtc)

@@ -44,7 +44,7 @@ typedef struct
 
 typedef struct 
 {
-    float *data;
+    _Alignas(16) float *data;
     int w;
     int h;
     int ch;
@@ -61,7 +61,7 @@ typedef struct
 
 typedef struct 
 {
-    unsigned char *data;
+    _Alignas(16) unsigned char *data;
     int w;
     int h;
     int ch;
@@ -102,6 +102,7 @@ void SGL_free_internal_ctx(SGL_InternalCtx *i_ctx);
 vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc);
 vec3 sample_f32_rgb_offset(const Texture_F32 *tex, vec2 tc, ivec2 offset);
 vec3 sample_f32_rgb_mip(const Texture_F32Mip *tex, vec2 tc, float mip);
+vec4 sample_u8_rgba(const Texture_U8 *tex, vec2 tc);
 vec4 gather_f32(const Texture_F32 *tex, vec2 tc, int channel, vec2 *out_dtc);
 
 Texture_F32Mip SGL_create_mipmaps(const Texture_F32 *tex);

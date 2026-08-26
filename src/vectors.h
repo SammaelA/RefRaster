@@ -52,7 +52,7 @@ typedef struct
             float z;
             float w;
         };
-        float M[4];
+        _Alignas(16) float M[4];
     };
 } vec4;
 
