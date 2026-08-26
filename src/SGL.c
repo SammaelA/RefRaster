@@ -10,7 +10,10 @@ Texture_F32 SGL_init_framebuffer(int w, int h, int ch)
     fb.w = w;
     fb.h = h;
     fb.ch = ch;
-    fb.data = malloc(w * h * ch * sizeof(float));
+
+    int data_size = 4*((w * h * ch + 3) / 4);
+
+    fb.data = malloc(data_size * sizeof(float));
     return fb;
 }
 void SGL_free_framebuffer(Texture_F32 *fb)

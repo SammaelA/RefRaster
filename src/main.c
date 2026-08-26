@@ -21,6 +21,7 @@
 // 8) Proper instancing and scene management: ~3 hours
 // 9) Shadow mapping: ~3 hours
 //10) Slow FXAA: ~2 hours
+//11) Faster texture sampling and FXAA: ~3 hours
 
 //10) Faster rasterization techniques
 //11) Multithreading
@@ -232,7 +233,7 @@ vec4 terrain_PS(const Fragment *f, const SGL_Uniforms *u)
         Fragment nf = make_fragment(v, 1, 1, 0);
         if (nf.depth < 1.0f)
         {
-            const float sh_depth = sample_f32_rgb(&(s->static_shadowmap), nf.screen_pos).x;
+            const float sh_depth = sample_f32_r(&(s->static_shadowmap), nf.screen_pos);
             in_light = sh_depth > nf.depth;
         }
     }
@@ -447,7 +448,7 @@ static float get_height(const Scene *s, float x, float z)
     const float t_sz = s->terrain_area_size;
     const vec2 v_tc = make2(0.5f*(x+t_sz)/t_sz, 0.5f*(z+t_sz)/t_sz);
 
-    return sample_f32_rgb(&(s->heightmap), v_tc).x;
+    return sample_f32_r(&(s->heightmap), v_tc);
 }
 
 StaticModel load_and_place(const Scene *s, const char *filename, const char *tex_filename, vec2 pos, float self_height, float scale)
@@ -656,6 +657,7 @@ clock_t t3 = clock();
     else if (s->settings.aa_mode == FXAA_FAST)
     {
         FXAA_pass(&s->fb, &s->fxaa_luma, &s->fb_aa);
+        SGL_resolve_simple(s->fb_aa, s->present_buffer);
     }
     else
     {

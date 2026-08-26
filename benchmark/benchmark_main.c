@@ -159,7 +159,7 @@ inline static vec3 sample_f32_rgb_fast_raw(const float *data, int w, int h, int 
 
 // ------------------------------------------------------- SIMD sampler (SSE + FMA)
 //
-// Same result as SAMPLE_F32_RAW, bit for bit, but the four texels are fetched as
+// Same bilinear result as SAMPLE_F32_RAW, but the four texels are fetched as
 // four 16-byte loads and blended with the nested-lerp form
 //     top = a + (b-a)*dx ;  bot = c + (d-c)*dx ;  out = top + (bot-top)*dy
 // which is 3 FMAs on all channels at once instead of 4 mul-chains per channel.
@@ -167,6 +167,9 @@ inline static vec3 sample_f32_rgb_fast_raw(const float *data, int w, int h, int 
 // Requirement: each texel load reads 16 bytes, so a 1- or 3-channel texture must
 // have >= 16 bytes of slack after its last texel (see TEX_TAIL_PAD). 4-channel
 // textures need no padding. Lanes past n_ch hold garbage and are simply ignored.
+//
+// Not bit-identical to the macro: reassociating the blend moves rounding, so
+// about a third of samples differ by 1 ulp (max |diff| measured 1.2e-07).
 
 #if HAVE_SIMD_SAMPLERS
 
@@ -200,42 +203,12 @@ inline static __m128 sample_f32_simd_core(const float *data, int w, int h, int n
     return FMADD_PS(_mm_sub_ps(bot, top), DY, top);
 }
 
-
-inline static __m128 sample_f32_simd_rgba_core(const float *data, int w, int h, int n_ch,
-                                               vec2 tc, ivec2 tc_offset)
-{
-    const float xf = tc.x * w, yf = tc.y * h;
-    const int i = clampi((int)xf + tc_offset.x, 0, w - 1);
-    const int j = clampi((int)yf + tc_offset.y, 0, h - 1);
-    const float dx = xf - (float)(int)xf;
-    const float dy = yf - (float)(int)yf;
-    const int di = (i == w - 1) ? 0 : 1;
-    const int dj = (j == h - 1) ? 0 : 1;
-
-    const float *p0 = data + (size_t)n_ch * ((size_t)w * j + i);
-    const float *p1 = data + (size_t)n_ch * ((size_t)w * (j + dj) + i);
-    const size_t dio = (size_t)n_ch * di;
-
-    const __m128 a = _mm_loadu_ps(p0),       b = _mm_loadu_ps(p0 + dio);
-    const __m128 c = _mm_loadu_ps(p1),       d = _mm_loadu_ps(p1 + dio);
-    const __m128 DX = _mm_set1_ps(dx),       DY = _mm_set1_ps(dy);
-
-    const __m128 top = FMADD_PS(_mm_sub_ps(b, a), DX, a);
-    const __m128 bot = FMADD_PS(_mm_sub_ps(d, c), DX, c);
-    return FMADD_PS(_mm_sub_ps(bot, top), DY, top);
-}
-
 // vec3 is 12 bytes, so it cannot be stored to directly from a 16-byte register.
 inline static vec3 m128_to_vec3(__m128 v)
 {
     float t[4];
     _mm_storeu_ps(t, v);
     return make3(t[0], t[1], t[2]);
-}
-
-inline static float sample_f32_r_simd(const Texture_F32 *tex, vec2 tc)
-{
-    return _mm_cvtss_f32(sample_f32_simd_core(tex->data, tex->w, tex->h, tex->ch, tc, makei2(0,0)));
 }
 
 inline static vec3 sample_f32_rgb_simd(const Texture_F32 *tex, vec2 tc)
@@ -291,6 +264,47 @@ inline static vec4 sample_u8_rgba_simd(const Texture_U8 *tex, vec2 tc)
 
 #endif  // HAVE_SIMD_SAMPLERS
 
+// --------------------------------------------- single channel (depth / shadow)
+//
+// Deliberately scalar: with one value to blend there is nothing for a SIMD
+// blend to parallelise, and going through the 4x16-byte core wastes three
+// quarters of every load. What actually pays here:
+//
+//   - 2 loads instead of 4. At n_ch == 1 the horizontal neighbours t00 and t10
+//     are adjacent floats, so one load covers both.
+//   - No address select on the column. At the last column the answer is t00
+//     whatever dx is, so zeroing dx produces it without a cmov and the
+//     out-of-row p0[1] is multiplied by zero. Reading that float needs 4 bytes
+//     of tail slack, which TEX_TAIL_PAD already provides.
+//   - floorf and the truncation to int are independent, so the fraction and
+//     the address are computed in parallel rather than chaining
+//     cvttss2si -> cvtsi2ss.
+//
+// The row neighbour keeps its cmov: dropping it too would mean padding every
+// texture by a whole row, and it measured no faster below 64 MiB.
+//
+// Precondition: tex->ch == 1. Unlike sample_f32_r_fast this does not stride by
+// n_ch, so it is a depth/mask sampler, not a "channel 0 of anything" sampler.
+inline static float sample_f32_r_simd(const Texture_F32 *tex, vec2 tc)
+{
+    const float *data = tex->data;
+    const int w = tex->w, h = tex->h;
+
+    const float xf = tc.x * w, yf = tc.y * h;
+    const int i = (int)xf, j = (int)yf;
+    float dx = xf - floorf(xf);
+    const float dy = yf - floorf(yf);
+    if (i == w - 1) dx = 0.0f;
+    const int dj = (j == h - 1) ? 0 : 1;
+
+    const float *p0 = data + ((size_t)w * j + i);
+    const float *p1 = p0 + (size_t)w * dj;
+
+    const float top = p0[0] + (p0[1] - p0[0]) * dx;
+    const float bot = p1[0] + (p1[1] - p1[0]) * dx;
+    return top + (bot - top) * dy;
+}
+
 inline static float sample_f32_r_fast(const Texture_F32 *tex, vec2 tc)
 {
     vec3 res = make_zero3();
@@ -322,7 +336,6 @@ inline static vec3 sample_f32_rgb_fast_offset(const Texture_F32 *tex, vec2 tc, i
 #if !HAVE_SIMD_SAMPLERS
 // Without SSE4.1 the "simd" variant is just the scalar one, so the benchmark
 // still builds and runs; the two rows then report the same implementation.
-#define sample_f32_r_simd          sample_f32_r_fast
 #define sample_f32_rgb_simd        sample_f32_rgb_fast
 #define sample_f32_rgba_simd       sample_f32_rgba_fast
 #define sample_f32_rgb_simd_offset sample_f32_rgb_fast_offset
@@ -407,29 +420,6 @@ static BenchResult bench_resample_5x(int M, int N, uint32_t seed, int simd)
 }
 
 // ------------------------------------------------------- cases 3, 4, 5 and 6
-
-inline static float sample_f32_r(const float *data, int w, int h, int n_ch, 
-                                 vec2 tc, int data_offset, ivec2 tc_offset)
-{
-    const vec2 tc_t = make2(tc.x*w, tc.y*h);
-    const vec2 tc_i = make2((int)tc_t.x, (int)tc_t.y);
-    const vec2 dtc  = sub2(tc_t, tc_i);
-
-    float res = 0;
-    // clamp after the offset: without it a non-zero offset walks off the edge
-    const int i = clampi(tc_i.x + tc_offset.x, 0, w-1);
-    const int j = clampi(tc_i.y + tc_offset.y, 0, h-1);
-    const int di = (i == w-1) ? 0 : 1;
-    const int dj = (j == h-1) ? 0 : 1;
-
-    {
-        res = (1-dtc.x)*(1-dtc.y)*data[data_offset + n_ch*(w*(j+0) + (i+0))+0] +
-                      (dtc.x)*(1-dtc.y)*data[data_offset + n_ch*(w*(j+0) + (i+di))+0] + 
-                    (1-dtc.x)*  (dtc.y)*data[data_offset + n_ch*(w*(j+dj) + (i+0))+0] + 
-                      (dtc.x)*  (dtc.y)*data[data_offset + n_ch*(w*(j+dj) + (i+di))+0];
-    }   
-    return res;
-}
 
 #define RANDOM_LOOP(SAMPLE, SUM)                                  \
     for (long k = 0; k < K; k++)                                  \

@@ -99,6 +99,27 @@ typedef struct
 void* SGL_init_internal_ctx();
 void SGL_free_internal_ctx(SGL_InternalCtx *i_ctx);
 
+inline static float sample_f32_r(const Texture_F32 *tex, vec2 tc)
+{
+    const float *data = tex->data;
+    const int w = tex->w, h = tex->h;
+
+    const float xf = tc.x * w, yf = tc.y * h;
+    const int i = clampi((int)xf, 0, w - 1);
+    const int j = clampi((int)yf, 0, h - 1);
+    float dx = xf - floorf(xf);
+    const float dy = yf - floorf(yf);
+    if (i == w - 1) dx = 0.0f;
+    const int dj = (j == h - 1) ? 0 : 1;
+
+    const float *p0 = data + (w * j + i);
+    const float *p1 = p0 + w * dj;
+
+    const float top = p0[0] + (p0[1] - p0[0]) * dx;
+    const float bot = p1[0] + (p1[1] - p1[0]) * dx;
+    return top + (bot - top) * dy;
+}
+
 vec3 sample_f32_rgb(const Texture_F32 *tex, vec2 tc);
 vec3 sample_f32_rgb_offset(const Texture_F32 *tex, vec2 tc, ivec2 offset);
 vec3 sample_f32_rgb_mip(const Texture_F32Mip *tex, vec2 tc, float mip);

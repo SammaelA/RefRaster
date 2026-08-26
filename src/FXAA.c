@@ -330,9 +330,9 @@ vec4 FXAAPixelShaderFast(const Texture_F32 *tex, const Texture_F32 *luma, vec2 f
     vec2 posN = sub2(posB, cmul2(fxaa_quality_p[0], offNP));
     vec2 posP = add2(posB, cmul2(fxaa_quality_p[0], offNP));
     const float subpixD = ((-2.0f) * subpixC) + 3.0f;
-    float lumaEndN = sample_f32_rgb(luma, posN).x;
+    float lumaEndN = sample_f32_r(luma, posN);
     const float subpixE = subpixC * subpixC;
-    float lumaEndP = sample_f32_rgb(luma, posP).x;
+    float lumaEndP = sample_f32_r(luma, posP);
 /*--------------------------------------------------------------------------*/
     if (!pairN) lumaNN = lumaSS;
     const float gradientScaled = gradient * 1.0f / 4.0f;
@@ -351,8 +351,8 @@ vec4 FXAAPixelShaderFast(const Texture_F32 *tex, const Texture_F32 *luma, vec2 f
     // The reference unrolls this search as nested #if blocks, one per quality step.
     for (int i = 2; i < FXAA_QUALITY_PS && doneNP; i++)
     {
-        if (!doneN) lumaEndN = sample_f32_rgb(luma, posN).x - lumaNN * 0.5f;
-        if (!doneP) lumaEndP = sample_f32_rgb(luma, posP).x - lumaNN * 0.5f;
+        if (!doneN) lumaEndN = sample_f32_r(luma, posN) - lumaNN * 0.5f;
+        if (!doneP) lumaEndP = sample_f32_r(luma, posP) - lumaNN * 0.5f;
         doneN = fabsf(lumaEndN) >= gradientScaled;
         doneP = fabsf(lumaEndP) >= gradientScaled;
         if (!doneN) posN = sub2(posN, cmul2(fxaa_quality_p[i], offNP));
