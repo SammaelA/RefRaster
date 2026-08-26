@@ -84,6 +84,7 @@ typedef enum
 {
     NO_AA,
     FXAA,
+    FXAA_FAST,
     AA_MODE_COUNT
 } AAMode;
 
@@ -101,7 +102,7 @@ RenderSettings get_default_render_settings()
     settings.render_mode = LAMBERT;
     settings.shadows_mode = USE_SHADOWS;
     settings.cubemap_mode = USE_CUBEMAP;
-    settings.aa_mode = FXAA;
+    settings.aa_mode = FXAA_FAST;
     return settings;
 }
 typedef struct
@@ -125,6 +126,7 @@ typedef struct
 
     Texture_F32 fb;
     Texture_F32 fb_aa;
+    Texture_F32 fxaa_luma;
     Texture_U8 present_buffer;
     void *sgl_ctx;
 
@@ -525,6 +527,7 @@ Scene init_scene(int width, int height)
 
     s.fb = SGL_init_framebuffer(width, height, 4);
     s.fb_aa = SGL_init_framebuffer(width, height, 4);
+    s.fxaa_luma = SGL_init_framebuffer(width, height, 1);
     s.sgl_ctx = SGL_init_internal_ctx();
 
     Texture_F32 grass = load_tex("resources/textures/Grass_09-256x256.png");
@@ -575,6 +578,7 @@ void free_scene(Scene *s)
 
     SGL_free_framebuffer(&s->fb);
     SGL_free_framebuffer(&s->fb_aa);
+    SGL_free_framebuffer(&s->fxaa_luma);
     SGL_free_texture_u8(&s->present_buffer);
     SGL_free_internal_ctx(s->sgl_ctx);
 
@@ -648,6 +652,10 @@ clock_t t3 = clock();
         }
 
         SGL_resolve_simple(s->fb_aa, s->present_buffer);
+    }
+    else if (s->settings.aa_mode == FXAA_FAST)
+    {
+        FXAA_pass(&s->fb, &s->fxaa_luma, &s->fb_aa);
     }
     else
     {

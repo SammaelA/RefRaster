@@ -233,3 +233,185 @@ vec4 FXAAPixelShader(const Texture_F32 *tex, vec2 pos, vec2 frame_rcp)
 
     return to_vec4(fxaa_tex_top(tex, posM), lumaM);
 }
+
+vec3 fetch_rgb(const Texture_F32 *tex, int i, int j)
+{
+    return make3(tex->data[tex->ch * (tex->w * j + i) + 0],
+                 tex->data[tex->ch * (tex->w * j + i) + 1],
+                 tex->data[tex->ch * (tex->w * j + i) + 2]);
+}
+
+float fetch_luma(const Texture_F32 *tex, int i, int j)
+{
+    return tex->data[(tex->w * j + i)];
+}
+
+vec4 FXAAPixelShaderFast(const Texture_F32 *tex, const Texture_F32 *luma, vec2 frame_rcp, int x, int y)
+{
+    vec2 posM = make2((float)x/tex->w, (float)y/tex->h);
+
+    const vec3 rgbM = fetch_rgb(tex, x, y);
+    const float lumaM = fetch_luma(luma, x, y);
+    float lumaS = fetch_luma(luma, x, y+1);
+    float lumaE = fetch_luma(luma, x+1, y);
+    float lumaN = fetch_luma(luma, x, y-1);
+    float lumaW = fetch_luma(luma, x-1, y);
+/*--------------------------------------------------------------------------*/
+    const float maxSM = maxf(lumaS, lumaM);
+    const float minSM = minf(lumaS, lumaM);
+    const float maxESM = maxf(lumaE, maxSM);
+    const float minESM = minf(lumaE, minSM);
+    const float maxWN = maxf(lumaN, lumaW);
+    const float minWN = minf(lumaN, lumaW);
+    const float rangeMax = maxf(maxWN, maxESM);
+    const float rangeMin = minf(minWN, minESM);
+    const float rangeMaxScaled = rangeMax * FXAA_QUALITY_EDGE_THRESHOLD;
+    const float range = rangeMax - rangeMin;
+    const float rangeMaxClamped = maxf(FXAA_QUALITY_EDGE_THRESHOLD_MIN, rangeMaxScaled);
+    const int earlyExit = range < rangeMaxClamped;
+/*--------------------------------------------------------------------------*/
+    if (earlyExit)
+        return to_vec4(rgbM, lumaM);
+    //else
+    //    return make4(1,0,0,1);
+/*--------------------------------------------------------------------------*/
+    const float lumaNW = fetch_luma(luma, x-1, y-1);
+    const float lumaSE = fetch_luma(luma, x+1, y+1);
+    const float lumaNE = fetch_luma(luma, x+1, y-1);
+    const float lumaSW = fetch_luma(luma, x-1, y+1);
+/*--------------------------------------------------------------------------*/
+    const float lumaNS = lumaN + lumaS;
+    const float lumaWE = lumaW + lumaE;
+    const float subpixRcpRange = 1.0f / range;
+    const float subpixNSWE = lumaNS + lumaWE;
+    const float edgeHorz1 = (-2.0f * lumaM) + lumaNS;
+    const float edgeVert1 = (-2.0f * lumaM) + lumaWE;
+/*--------------------------------------------------------------------------*/
+    const float lumaNESE = lumaNE + lumaSE;
+    const float lumaNWNE = lumaNW + lumaNE;
+    const float edgeHorz2 = (-2.0f * lumaE) + lumaNESE;
+    const float edgeVert2 = (-2.0f * lumaN) + lumaNWNE;
+/*--------------------------------------------------------------------------*/
+    const float lumaNWSW = lumaNW + lumaSW;
+    const float lumaSWSE = lumaSW + lumaSE;
+    const float edgeHorz4 = (fabsf(edgeHorz1) * 2.0f) + fabsf(edgeHorz2);
+    const float edgeVert4 = (fabsf(edgeVert1) * 2.0f) + fabsf(edgeVert2);
+    const float edgeHorz3 = (-2.0f * lumaW) + lumaNWSW;
+    const float edgeVert3 = (-2.0f * lumaS) + lumaSWSE;
+    const float edgeHorz = fabsf(edgeHorz3) + edgeHorz4;
+    const float edgeVert = fabsf(edgeVert3) + edgeVert4;
+/*--------------------------------------------------------------------------*/
+    const float subpixNWSWNESE = lumaNWSW + lumaNESE;
+    float lengthSign = frame_rcp.x;
+    const int horzSpan = edgeHorz >= edgeVert;
+    const float subpixA = subpixNSWE * 2.0f + subpixNWSWNESE;
+/*--------------------------------------------------------------------------*/
+    if (!horzSpan) lumaN = lumaW;
+    if (!horzSpan) lumaS = lumaE;
+    if ( horzSpan) lengthSign = frame_rcp.y;
+    const float subpixB = (subpixA * (1.0f / 12.0f)) - lumaM;
+/*--------------------------------------------------------------------------*/
+    const float gradientN = lumaN - lumaM;
+    const float gradientS = lumaS - lumaM;
+    float lumaNN = lumaN + lumaM;
+    const float lumaSS = lumaS + lumaM;
+    const int pairN = fabsf(gradientN) >= fabsf(gradientS);
+    const float gradient = maxf(fabsf(gradientN), fabsf(gradientS));
+    if (pairN) lengthSign = -lengthSign;
+    const float subpixC = fxaa_sat(fabsf(subpixB) * subpixRcpRange);
+/*--------------------------------------------------------------------------*/
+    vec2 posB = posM;
+    vec2 offNP;
+    offNP.x = (!horzSpan) ? 0.0f : frame_rcp.x;
+    offNP.y = ( horzSpan) ? 0.0f : frame_rcp.y;
+    if (!horzSpan) posB.x += lengthSign * 0.5f;
+    if ( horzSpan) posB.y += lengthSign * 0.5f;
+/*--------------------------------------------------------------------------*/
+    vec2 posN = sub2(posB, cmul2(fxaa_quality_p[0], offNP));
+    vec2 posP = add2(posB, cmul2(fxaa_quality_p[0], offNP));
+    const float subpixD = ((-2.0f) * subpixC) + 3.0f;
+    float lumaEndN = sample_f32_rgb(luma, posN).x;
+    const float subpixE = subpixC * subpixC;
+    float lumaEndP = sample_f32_rgb(luma, posP).x;
+/*--------------------------------------------------------------------------*/
+    if (!pairN) lumaNN = lumaSS;
+    const float gradientScaled = gradient * 1.0f / 4.0f;
+    const float lumaMM = lumaM - lumaNN * 0.5f;
+    const float subpixF = subpixD * subpixE;
+    const int lumaMLTZero = lumaMM < 0.0f;
+/*--------------------------------------------------------------------------*/
+    lumaEndN -= lumaNN * 0.5f;
+    lumaEndP -= lumaNN * 0.5f;
+    int doneN = fabsf(lumaEndN) >= gradientScaled;
+    int doneP = fabsf(lumaEndP) >= gradientScaled;
+    if (!doneN) posN = sub2(posN, cmul2(fxaa_quality_p[1], offNP));
+    int doneNP = (!doneN) || (!doneP);
+    if (!doneP) posP = add2(posP, cmul2(fxaa_quality_p[1], offNP));
+/*--------------------------------------------------------------------------*/
+    // The reference unrolls this search as nested #if blocks, one per quality step.
+    for (int i = 2; i < FXAA_QUALITY_PS && doneNP; i++)
+    {
+        if (!doneN) lumaEndN = sample_f32_rgb(luma, posN).x - lumaNN * 0.5f;
+        if (!doneP) lumaEndP = sample_f32_rgb(luma, posP).x - lumaNN * 0.5f;
+        doneN = fabsf(lumaEndN) >= gradientScaled;
+        doneP = fabsf(lumaEndP) >= gradientScaled;
+        if (!doneN) posN = sub2(posN, cmul2(fxaa_quality_p[i], offNP));
+        doneNP = (!doneN) || (!doneP);
+        if (!doneP) posP = add2(posP, cmul2(fxaa_quality_p[i], offNP));
+    }
+/*--------------------------------------------------------------------------*/
+    float dstN = posM.x - posN.x;
+    float dstP = posP.x - posM.x;
+    if (!horzSpan) dstN = posM.y - posN.y;
+    if (!horzSpan) dstP = posP.y - posM.y;
+/*--------------------------------------------------------------------------*/
+    const int goodSpanN = (lumaEndN < 0.0f) != lumaMLTZero;
+    const float spanLength = (dstP + dstN);
+    const int goodSpanP = (lumaEndP < 0.0f) != lumaMLTZero;
+    const float spanLengthRcp = 1.0f / spanLength;
+/*--------------------------------------------------------------------------*/
+    const int directionN = dstN < dstP;
+    const float dst = minf(dstN, dstP);
+    const int goodSpan = directionN ? goodSpanN : goodSpanP;
+    const float subpixG = subpixF * subpixF;
+    const float pixelOffset = (dst * (-spanLengthRcp)) + 0.5f;
+    const float subpixH = subpixG * FXAA_QUALITY_SUBPIX;
+/*--------------------------------------------------------------------------*/
+    const float pixelOffsetGood = goodSpan ? pixelOffset : 0.0f;
+    const float pixelOffsetSubpix = maxf(pixelOffsetGood, subpixH);
+    if (!horzSpan) posM.x += pixelOffsetSubpix * lengthSign;
+    if ( horzSpan) posM.y += pixelOffsetSubpix * lengthSign;
+
+    return to_vec4(sample_f32_rgb(tex, posM), lumaM);
+}
+
+void FXAA_pass(const Texture_F32 *tex, Texture_F32 *tmp_luma, Texture_F32 *out)
+{
+    const uint32_t w = tex->w;
+    const uint32_t h = tex->h;
+
+    for (int i=0; i<w*h; i++)
+    {
+        tmp_luma->data[i] = 0.299f*tex->data[tex->ch*i+0]+0.587f*tex->data[tex->ch*i+1]+0.114f*tex->data[tex->ch*i+2];
+    }
+
+    const vec2 rcp = make2(1.0f/w, 1.0f/h);
+
+    for (int y=0;y<h;y++)
+    {
+        for (int x=0;x<w;x++)
+        {
+            vec4 aa_pixel;
+            if (x==0 || y==0 || x==w-1 || y==h-1)
+                aa_pixel = to_vec4(fetch_rgb(tex, x, y), 1.0f);
+            else
+                aa_pixel = FXAAPixelShaderFast(tex, tmp_luma, rcp, x, y);
+
+            const int off = 4*(y*w+x);
+            out->data[off+0] = aa_pixel.x;
+            out->data[off+1] = aa_pixel.y;
+            out->data[off+2] = aa_pixel.z;
+            out->data[off+3] = aa_pixel.w;
+        }
+    }    
+}
